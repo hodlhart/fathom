@@ -89,13 +89,29 @@ def _session_token():
     if token:
         return token
 
+    # A file is preferred over the environment for a long-lived secret: an
+    # exported variable is readable from /proc/<pid>/environ by anything running
+    # as the same user, and it survives in shell history if it was set inline.
+    path = os.environ.get("WEIRVERN_SESSION_FILE", "").strip()
+    if path:
+        try:
+            with open(os.path.expanduser(path), encoding="utf-8") as handle:
+                token = handle.read().strip()
+        except OSError as exc:
+            raise WeirvernError(
+                f"Could not read the session file at {path}: {exc.strerror}."
+            ) from exc
+        if token:
+            return token
+        raise WeirvernError(f"The session file at {path} is empty.")
+
     username = os.environ.get("WEIRVERN_USERNAME", "").strip()
     password = os.environ.get("WEIRVERN_PASSWORD", "")
     if not username or not password:
         raise WeirvernError(
-            "No Weirvern credential is configured. Set WEIRVERN_SESSION to a session "
-            "token, or set WEIRVERN_USERNAME and WEIRVERN_PASSWORD so fathom can "
-            "sign in for itself."
+            "No Weirvern credential is configured. Set WEIRVERN_SESSION_FILE to a "
+            "file holding a session token, or WEIRVERN_SESSION to the token itself, "
+            "or WEIRVERN_USERNAME and WEIRVERN_PASSWORD so fathom can sign in."
         )
 
     payload = _send(
@@ -219,9 +235,19 @@ def overview(token=None):
     return get("/api/overview", token=token)
 
 
-def flows(token=None, **filters):
-    """Flow records matching the given filters."""
-    return get("/api/flows", params=filters, token=token)
+def flows(src=None, port=None, proto=None, hours=24, token=None):
+    """Flow records for one host or one port. At least one filter is required.
+
+    The API refuses a bare call: it answers 400 asking for port, proto or src.
+    """
+    params = {"hours": hours}
+    if src:
+        params["src"] = src
+    if port:
+        params["port"] = port
+    if proto:
+        params["proto"] = proto
+    return get("/api/flows", params=params, token=token)
 
 
 def anomalies(token=None, **filters):
@@ -229,14 +255,21 @@ def anomalies(token=None, **filters):
     return get("/api/anomalies", params=filters, token=token)
 
 
-def host(host_id, token=None):
-    """One host's detail: identity, services, counters."""
-    return get("/api/host", params={"id": host_id}, token=token)
+def host(addr, token=None):
+    """One host's detail: identity, totals, top destinations, ports and timeline."""
+    return get("/api/host", params={"addr": addr}, token=token)
 
 
-def evidence(token=None, **filters):
-    """The evidence bundle for a host: the five stages a finding is argued from."""
-    return get("/api/evidence", params=filters, token=token)
+def evidence(addr, start, token=None, **filters):
+    """The evidence bundle behind one finding.
+
+    Needs the finding's window start as well as the address: evidence is
+    assembled around a moment, not around a host in general.
+    """
+    params = dict(filters)
+    params["addr"] = addr
+    params["start"] = start
+    return get("/api/evidence", params=params, token=token)
 
 
 def zeek(token=None, **filters):
@@ -244,10 +277,10 @@ def zeek(token=None, **filters):
     return get("/api/zeek", params=filters, token=token)
 
 
-def zeeklog(table, token=None, **filters):
-    """Records from one Zeek log, per host."""
+def zeeklog(log, token=None, **filters):
+    """Records from one Zeek log, per host. The parameter is `log`, not `table`."""
     params = dict(filters)
-    params["table"] = table
+    params["log"] = log
     return get("/api/zeeklog", params=params, token=token)
 
 
@@ -256,9 +289,14 @@ def netflow(token=None, **filters):
     return get("/api/netflow", params=filters, token=token)
 
 
-def review(token=None, **filters):
-    """The alert audit: what fired, what was done about it."""
-    return get("/api/review", params=filters, token=token)
+def audit(token=None, **filters):
+    """The alert audit: what fired and what was done about it."""
+    return get("/api/audit", params=filters, token=token)
+
+
+def write_trail(token=None, **filters):
+    """The record of writes made through the console."""
+    return get("/api/write-trail", params=filters, token=token)
 
 
 def dns(token=None, **filters):
@@ -271,6 +309,9 @@ def episodes(token=None, **filters):
     return get("/api/episodes", params=filters, token=token)
 
 
-def incident(token=None, **filters):
-    """Incident detail assembled from the surrounding window."""
-    return get("/api/incident", params=filters, token=token)
+def incident(addr, start, token=None, **filters):
+    """Incident detail for one address around one moment."""
+    params = dict(filters)
+    params["addr"] = addr
+    params["start"] = start
+    return get("/api/incident", params=params, token=token)

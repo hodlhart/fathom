@@ -13,6 +13,10 @@ Every tool returns a short block of text rather than raw JSON. The model reads
 these strings, so each one says what was asked, what came back, and, when a read
 fails, what to check.
 
+The field names below are the API's, measured against a running console rather
+than assumed. The first draft guessed at several of them and the tools printed
+blanks without complaining.
+
 Nothing in this file may print to stdout: stdout carries the stdio protocol. Use
 client._log, which writes to stderr.
 """
@@ -32,7 +36,7 @@ def _fail(exc):
 
 
 def _rows(items, fields, limit=20):
-    """Render a list of dicts as aligned rows, newest first."""
+    """Render a list of dicts as aligned rows."""
     if not isinstance(items, list) or not items:
         return "  (nothing in this window)"
     lines = []
@@ -42,35 +46,33 @@ def _rows(items, fields, limit=20):
         cells = []
         for key in fields:
             value = item.get(key)
-            if value is None:
-                value = ""
-            cells.append(str(value)[:40])
+            cells.append("" if value is None else str(value)[:38])
         lines.append("  " + "  ".join(cells))
     if len(items) > limit:
         lines.append(f"  ... {len(items) - limit} more not shown")
     return "\n".join(lines)
 
 
-def _summary(value):
+def _summary(value, limit=16):
     """Render one dict as key and value lines, for payloads that are not lists."""
     if not isinstance(value, dict):
         return f"  {value}"
     lines = []
-    for key, item in value.items():
+    for key, item in list(value.items())[:limit]:
         if isinstance(item, (list, dict)):
-            lines.append(f"  {key}: {json.dumps(item)[:200]}")
+            lines.append(f"  {key}: {json.dumps(item)[:160]}")
         else:
             lines.append(f"  {key}: {item}")
-    return "\n".join(lines[:25])
+    return "\n".join(lines)
 
 
 @mcp.tool()
 def list_anomalies(hours: int = 24, limit: int = 20) -> str:
-    """List what the detectors flagged recently, newest first.
+    """List what the detectors flagged recently, highest score first.
 
     Use this first when asked what looks wrong, what fired, or whether anything
-    suspicious has happened. It returns the detector's findings with the host and
-    the reason, which is the starting point for every hunt.
+    suspicious has happened. It returns each finding with the host, the score and
+    which models voted for it, and that is the starting point for a hunt.
 
     Args:
         hours: how far back to look, in hours. Defaults to 24.
@@ -84,144 +86,203 @@ def list_anomalies(hours: int = 24, limit: int = 20) -> str:
     except client.WeirvernError as exc:
         return _fail(exc)
 
-    items = payload.get("anomalies", payload) if isinstance(payload, dict) else payload
-    header = f"Anomalies in the last {hours}h:"
-    return header + "\n" + _rows(items, ("ts", "host", "hostname", "score", "reason"), limit)
+    if not isinstance(payload, dict):
+        return _summary(payload)
+    rows = payload.get("rows") or []
+    header = f"Anomalies in the last {hours}h"
+    if payload.get("severity_counts"):
+        header += f", severity counts {payload['severity_counts']}"
+    if payload.get("watch_error"):
+        header += f", watch error: {str(payload['watch_error'])[:80]}"
+    body = _rows(rows, ("detected_at", "hostname", "anomaly_score", "confidence",
+                        "detected_by_models"), limit)
+    return header + ":\n" + body
 
 
 @mcp.tool()
-def hunt_flows(host: str = "", port: int = 0, proto: int = 0, hours: int = 1,
+def hunt_flows(src: str = "", port: int = 0, proto: int = 0, hours: int = 24,
                limit: int = 25) -> str:
-    """Search flow records for conversations matching a host, port or protocol.
+    """Search flow records for one host, one port or one protocol.
 
-    Use this when asked who talked to whom, whether a host reached somewhere it
-    should not have, or what happened on a port. This is the main hunting query:
-    filters are ANDed, and an unset filter matches everything.
+    Use this when asked who a host talked to, whether it reached somewhere it
+    should not have, or what happened on a port. The console refuses an
+    unfiltered flow query, so pass at least one of src, port or proto.
 
     Args:
-        host: an address to match as either endpoint, or empty for any.
-        port: a destination port to match, or 0 for any.
+        src: the source address to match. Usually what you want.
+        port: a destination port, or 0 for any.
         proto: an IP protocol number (6 TCP, 17 UDP), or 0 for any.
         hours: how far back to search.
-        limit: how many conversations to show.
+        limit: how many records to show.
 
     Returns:
-        One line per conversation with time, endpoints, protocol, bytes and
-        packets, or a sentence explaining why the search failed.
+        One line per flow with time, endpoints, port and volume, or a sentence
+        explaining why the search failed.
     """
-    params = {"hours": hours}
-    if host:
-        params["host"] = host
-    if port:
-        params["port"] = port
-    if proto:
-        params["proto"] = proto
+    if not (src or port or proto):
+        return (
+            "fathom needs a filter: pass src (a host address), port, or proto. "
+            "The console refuses an unfiltered flow query on purpose, because it "
+            "would return the whole segment."
+        )
     try:
-        payload = client.flows(**params)
+        payload = client.flows(src=src or None, port=port or None,
+                               proto=proto or None, hours=hours)
     except client.WeirvernError as exc:
         return _fail(exc)
 
-    items = payload.get("flows", payload) if isinstance(payload, dict) else payload
-    scope = " ".join(
-        part for part in (
-            f"host {host}" if host else "",
-            f"port {port}" if port else "",
-            f"proto {proto}" if proto else "",
-        ) if part
-    ) or "no filter"
-    header = f"Flows matching {scope} in the last {hours}h:"
-    return header + "\n" + _rows(
-        items, ("ts", "src", "dst", "dport", "proto", "bytes", "packets"), limit
+    if not isinstance(payload, dict):
+        return _summary(payload)
+    rows = payload.get("points") or []
+    scope = " ".join(part for part in (
+        f"src {src}" if src else "", f"port {port}" if port else "",
+        f"proto {proto}" if proto else "") if part)
+    header = f"Flows for {scope} in the last {hours}h"
+    if payload.get("total_flows") is not None:
+        header += f" ({payload.get('total_flows')} flows, {payload.get('total_pairs')} pairs)"
+    if payload.get("truncated"):
+        header += ", truncated"
+    return header + ":\n" + _rows(
+        rows, ("ts", "src_addr", "dst_addr", "dst_port", "proto", "bytes", "packets"), limit
     )
 
 
 @mcp.tool()
-def get_host_evidence(host: str) -> str:
-    """Assemble what is known about one host, as evidence rather than opinion.
+def get_host(addr: str) -> str:
+    """Show what is known about one host: name, volume, peers, ports, timeline.
 
-    Use this when asked to look at a specific address, to explain a finding, or
-    to answer whether something is normal for that host. It returns the identity,
-    what it talked to, and the stages a finding would be argued from.
+    Use this when asked to look at a specific address, or to decide whether
+    something is normal for that host. This is the conversation-level view. For
+    the evidence behind one specific finding, use get_finding_evidence.
 
     Args:
-        host: the address to assemble evidence for.
+        addr: the address to describe.
 
     Returns:
-        The host's identity and evidence stages, or a sentence explaining why the
-        read failed.
+        The host's name, totals, top destinations and ports, or a sentence
+        explaining why the read failed.
     """
     try:
-        detail = client.host(host)
-        bundle = client.evidence(host=host)
+        detail = client.host(addr)
     except client.WeirvernError as exc:
         return _fail(exc)
 
-    parts = [f"Evidence for {host}:"]
-    parts.append("identity:")
-    parts.append(_summary(detail))
-    stages = bundle.get("stages", bundle) if isinstance(bundle, dict) else bundle
-    parts.append("stages:")
-    if isinstance(stages, dict):
-        parts.append(_summary(stages))
-    else:
-        parts.append(_rows(stages, ("name", "state", "detail")))
+    if not isinstance(detail, dict):
+        return _summary(detail)
+    title = f"Host {addr}"
+    if detail.get("hostname"):
+        title += f" ({detail['hostname']})"
+    parts = [title + ":", "totals:", _summary(detail.get("totals") or {})]
+    parts.append("top destinations:")
+    parts.append(_rows(detail.get("top_destinations"),
+                       ("dst_addr", "hostname", "bytes", "flows"), 8))
+    parts.append("top ports:")
+    parts.append(_rows(detail.get("top_ports"), ("dst_port", "proto", "bytes", "flows"), 8))
+    if detail.get("errors"):
+        parts.append(f"note: {str(detail['errors'])[:200]}")
     return "\n".join(parts)
 
 
 @mcp.tool()
-def query_zeek(table: str = "dns", hours: int = 24, limit: int = 25) -> str:
-    """Read one Zeek log, grouped by host.
+def get_finding_evidence(addr: str, start: str) -> str:
+    """Assemble the evidence behind one finding, as the console argues it.
 
-    Use this when a flow alone is not enough: DNS to triage for beaconing, conn
-    for a connection record, ssl for certificate names, http for requests. Each
-    log answers a question the flow record cannot.
+    Use this when a specific detection needs defending, or when asked what proof
+    exists for a finding. It needs the moment the finding covers, which
+    list_anomalies reports as detected_at, because evidence is assembled around a
+    moment rather than around a host in general.
 
     Args:
-        table: the Zeek log name, for example dns, conn, ssl, http, files.
-        hours: how far back to read.
-        limit: how many hosts to show.
+        addr: the address the finding is about.
+        start: the finding's window start, as detected_at reports it.
 
     Returns:
-        Per-host counts for that log, or a sentence explaining why the read failed.
+        The evidence stages, or a sentence explaining why the read failed.
     """
     try:
-        payload = client.zeeklog(table, hours=hours)
+        bundle = client.evidence(addr, start)
     except client.WeirvernError as exc:
         return _fail(exc)
 
-    items = payload.get("hosts", payload) if isinstance(payload, dict) else payload
-    header = f"Zeek {table} log, last {hours}h, per host:"
-    return header + "\n" + _rows(items, ("host", "hostname", "count"), limit)
+    if not isinstance(bundle, dict):
+        return _summary(bundle)
+    parts = [f"Evidence for {addr} from {start}:"]
+    for key, value in list(bundle.items())[:10]:
+        if isinstance(value, list):
+            parts.append(f"{key}: {len(value)} item(s)")
+            parts.append(_rows(value, ("name", "state", "detail", "value"), 6))
+        elif isinstance(value, dict):
+            parts.append(f"{key}:")
+            parts.append(_summary(value))
+        else:
+            parts.append(f"  {key}: {value}")
+    return "\n".join(parts)
+
+
+@mcp.tool()
+def query_zeek(log: str = "dns", hours: int = 24, limit: int = 25) -> str:
+    """Read one Zeek log.
+
+    Use this when a flow alone is not enough: dns to triage beaconing, conn for
+    connection records, ssl for certificate names, http for requests, files for
+    transfers. Each log answers a question the flow record cannot.
+
+    Args:
+        log: the Zeek log name, for example dns, conn, ssl, http, files.
+        hours: how far back to read.
+        limit: how many entries to show.
+
+    Returns:
+        Entries from that log, or a sentence explaining why the read failed.
+    """
+    try:
+        payload = client.zeeklog(log, hours=hours)
+    except client.WeirvernError as exc:
+        return _fail(exc)
+
+    header = f"Zeek {log} log, last {hours}h:"
+    if isinstance(payload, dict):
+        rows = payload.get("rows") or payload.get("hosts")
+        if isinstance(rows, list):
+            return header + "\n" + _rows(rows, ("host", "hostname", "count", "name"), limit)
+    if isinstance(payload, list):
+        return header + "\n" + _rows(payload, ("host", "hostname", "count", "name"), limit)
+    return header + "\n" + _summary(payload)
 
 
 @mcp.tool()
 def top_talkers(hours: int = 24, limit: int = 10) -> str:
-    """Show the shape of the traffic: volume, protocol mix, busiest ports.
+    """Show the shape of the traffic: who is loudest, protocol mix, busiest ports.
 
-    Use this to orient before a hunt, or when asked for an overview of what the
-    segment was doing. Destination spread is included because a host talking to
-    many destinations is the scan and beacon shape rather than the busy-host shape.
+    Use this to orient before a hunt, or when asked what the segment was doing.
+    Destination spread is included because a host talking to many destinations is
+    the scan and beacon shape rather than the busy-host shape.
 
     Args:
         hours: how far back to summarise.
         limit: how many entries per section.
 
     Returns:
-        Three sections: volume over time, protocol mix, and the busiest
-        destination ports, or a sentence explaining why the read failed.
+        The busiest talkers, protocol mix and top ports, or a sentence explaining
+        why the read failed.
     """
     try:
         payload = client.netflow(hours=hours)
+        dashboard = client.overview()
     except client.WeirvernError as exc:
         return _fail(exc)
-
     if not isinstance(payload, dict):
         return _summary(payload)
-    parts = [f"Traffic shape over the last {hours}h:"]
-    for section in ("volume", "protocols", "ports", "spread"):
-        if section not in payload:
+
+    parts = [f"Traffic shape over the last {hours}h:", "busiest talkers:"]
+    # The per-host rows are on the dashboard summary, not in the netflow payload,
+    # whose sections are all aggregates.
+    talkers = dashboard.get("top_talkers") if isinstance(dashboard, dict) else None
+    parts.append(_rows(talkers, ("src_addr", "hostname", "bytes", "flows", "destinations"), limit))
+    for section in ("protocols", "ports", "volume", "spread", "noise"):
+        value = payload.get(section)
+        if not value:
             continue
-        value = payload[section]
         parts.append(f"{section}:")
         if isinstance(value, list):
             parts.append(_rows(value, ("name", "label", "count", "bytes"), limit))
@@ -232,18 +293,18 @@ def top_talkers(hours: int = 24, limit: int = 10) -> str:
 
 @mcp.tool()
 def dns_names(hours: int = 24, limit: int = 25) -> str:
-    """List the domain names hosts resolved recently.
+    """List the names hosts resolved recently, for command and control triage.
 
-    Use this when hunting for command and control, or when asked what a host was
-    resolving. Names matter because an address can be reassigned but a
-    registration belongs to somebody.
+    Use this when hunting for beaconing, or when asked what a host was looking
+    up. Names matter because an address can be reassigned but a registration
+    belongs to somebody.
 
     Args:
         hours: how far back to look.
-        limit: how many names to show.
+        limit: how many queries to show.
 
     Returns:
-        One line per name with the querying host and count, or a sentence
+        One line per query with time, client, name and type, or a sentence
         explaining why the read failed.
     """
     try:
@@ -251,9 +312,15 @@ def dns_names(hours: int = 24, limit: int = 25) -> str:
     except client.WeirvernError as exc:
         return _fail(exc)
 
-    items = payload.get("names", payload) if isinstance(payload, dict) else payload
-    header = f"Names resolved in the last {hours}h:"
-    return header + "\n" + _rows(items, ("name", "host", "count", "rcode"), limit)
+    if not isinstance(payload, dict):
+        return _summary(payload)
+    if not payload.get("available", True):
+        return f"DNS data is unavailable: {payload.get('reason', 'no reason given')}"
+    rows = payload.get("rows") or []
+    header = f"Names resolved in the last {hours}h ({payload.get('total', len(rows))} total):"
+    return header + "\n" + _rows(
+        rows, ("ts", "client", "query", "qtype_label", "rcode_label"), limit
+    )
 
 
 @mcp.tool()
@@ -261,26 +328,36 @@ def alert_audit(hours: int = 24, limit: int = 25) -> str:
     """Read what the alerting decided and what was done about it.
 
     Use this when asked whether anything was blocked, whether a rule fired, or
-    what happened after a finding. This is the record of decisions, not of
+    what happened after a finding. This is the record of decisions rather than of
     detections, so it answers a different question from list_anomalies.
 
     Args:
         hours: how far back to read.
-        limit: how many decisions to show.
+        limit: how many findings to show.
 
     Returns:
-        One line per decision, or a sentence explaining why the read failed.
+        One line per finding with its decision, or a sentence explaining why the
+        read failed.
     """
     try:
-        payload = client.review(hours=hours)
+        payload = client.audit(hours=hours)
     except client.WeirvernError as exc:
         return _fail(exc)
 
-    items = payload.get("decisions", payload) if isinstance(payload, dict) else payload
-    header = f"Alert decisions in the last {hours}h:"
-    return header + "\n" + _rows(
-        items, ("ts", "host", "hostname", "rule", "action", "outcome"), limit
-    )
+    if not isinstance(payload, dict):
+        return _summary(payload)
+    if not payload.get("available", True):
+        return f"The audit is unavailable: {payload.get('reason', 'no reason given')}"
+    findings = payload.get("findings")
+    header = f"Alert audit for the last {hours}h"
+    if payload.get("counts"):
+        header += f", counts {payload['counts']}"
+    if isinstance(findings, list):
+        return header + ":\n" + _rows(
+            findings, ("detected_at", "hostname", "score", "action", "state", "reason"), limit)
+    if isinstance(findings, dict):
+        return header + ":\n" + _summary(findings)
+    return header + ":\n  (nothing in this window)"
 
 
 if __name__ == "__main__":
