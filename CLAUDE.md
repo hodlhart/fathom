@@ -25,7 +25,7 @@ Neither is much use alone.
 
 | variable | meaning |
 |---|---|
-| `WEIRVERN_API_URL` | base URL, default `https://weirvern.lan` |
+| `WEIRVERN_API_URL` | base URL of the console. Required, no default |
 | `WEIRVERN_SESSION` | a session token minted elsewhere |
 | `WEIRVERN_USERNAME` / `WEIRVERN_PASSWORD` | used to sign in when no token is set |
 | `WEIRVERN_CA_BUNDLE` | the console's CA certificate, so TLS verification stays on |

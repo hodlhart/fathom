@@ -161,7 +161,10 @@ def get_host_evidence(host: str) -> str:
     parts.append(_summary(detail))
     stages = bundle.get("stages", bundle) if isinstance(bundle, dict) else bundle
     parts.append("stages:")
-    parts.append(_summary(stages) if isinstance(stages, dict) else _rows(stages, ("name", "state", "detail")))
+    if isinstance(stages, dict):
+        parts.append(_summary(stages))
+    else:
+        parts.append(_rows(stages, ("name", "state", "detail")))
     return "\n".join(parts)
 
 

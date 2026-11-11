@@ -24,7 +24,9 @@ import sys
 import urllib.error
 import urllib.request
 
-DEFAULT_API_URL = "https://weirvern.lan"
+# No default on purpose. The deployment address is environment specific and does
+# not belong in a repository, so fathom refuses to guess and says so instead.
+API_URL_ENV = "WEIRVERN_API_URL"
 
 # The header a Weirvern session travels in. Deliberately not a cookie: a custom
 # header cannot be set by a cross-site form, so the session cannot ride along on
@@ -56,8 +58,18 @@ def _ssl_context():
 
 
 def base_url():
-    """The Weirvern base URL, without a trailing slash."""
-    return os.environ.get("WEIRVERN_API_URL", DEFAULT_API_URL).rstrip("/")
+    """The Weirvern base URL, without a trailing slash.
+
+    Raises:
+        WeirvernError: if WEIRVERN_API_URL is unset, rather than guessing one.
+    """
+    url = os.environ.get(API_URL_ENV, "").strip()
+    if not url:
+        raise WeirvernError(
+            f"{API_URL_ENV} is not set. Point it at the Weirvern console, for "
+            "example the address you use in a browser."
+        )
+    return url.rstrip("/")
 
 
 def _session_token():
@@ -161,7 +173,9 @@ def _send(method, path, body=None, params=None, token=""):
         ) from exc
     except urllib.error.URLError as exc:
         reason = exc.reason
-        if isinstance(reason, ssl.SSLCertVerificationError) or "CERTIFICATE_VERIFY_FAILED" in str(reason):
+        cert_problem = isinstance(reason, ssl.SSLCertVerificationError)
+        cert_problem = cert_problem or "CERTIFICATE_VERIFY_FAILED" in str(reason)
+        if cert_problem:
             raise WeirvernError(
                 f"Weirvern's certificate is not trusted by this machine ({reason}). "
                 "Point WEIRVERN_CA_BUNDLE at the console's CA certificate, for example "
