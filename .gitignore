@@ -1,0 +1,15 @@
+.env
+*.token
+secrets.toml
+
+# deployment-specific: the console CA and the local venv
+ca-bundle.pem
+.venv/
+__pycache__/
+*.py[cod]
+.ruff_cache/
+
+.vscode/
+.idea/
+*.swp
+.DS_Store
