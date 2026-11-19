@@ -38,10 +38,15 @@ describe what the answer will be.
 | `alert_audit` | What the alerting decided and what was done about it |
 | `propose_block` | **Propose** blocking a host. See the boundary below |
 
-**`list_ripples` reads a route that is still being built.** If its payload changes shape, the
-tool says the shape is not understood rather than rendering blank lines, because a renamed field
-would otherwise look like a ripple with nothing in it. Treat that message as no answer, not an
-empty one, and re-check the route.
+**`list_ripples` says which kind of empty it is.** An empty ripple list has four different
+meanings and the payload carries the counts that tell them apart: nothing was measured, nothing
+measured was inside a monitored network, the baselines were too short to judge, or it was measured
+and nothing grouped. Each gets its own sentence, because "no ripple" on its own has been read as a
+quiet network when it meant a broken read.
+
+The route is young and still moving. If its payload loses a field the tool needs, it says the shape
+is not understood rather than rendering blanks, since a renamed key would otherwise look like a
+ripple with nothing in it. Treat that as no answer, not an empty one.
 
 ## The write boundary
 

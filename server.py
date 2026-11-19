@@ -439,10 +439,46 @@ def list_ripples(hours: int = 24, limit: int = 10) -> str:
     found = payload.get("ripples") or []
     window = payload.get("window_hours", hours)
     if not found:
+        # FOUR DIFFERENT FACTS USED TO PRODUCE THE SAME SENTENCE. The payload now carries the
+        # measurement counts behind the empty list, so which of these it is can be said instead of
+        # guessed: nothing was measured, nothing measured was in a monitored network, the baselines
+        # were too short to judge, or it was measured and nothing grouped. An operator asked to act
+        # on "no ripple" deserves to know which one they are looking at.
+        counts = payload.get("evidence") or {}
+        rows = int(counts.get("rows") or 0)
+        in_scope = int(counts.get("monitored_rows") or 0)
+        subjects = int(counts.get("subjects") or 0)
+        short = int(counts.get("baseline_short_rows") or 0)
+
+        if rows == 0:
+            return (
+                f"Nothing was measured in the last {window}h: the evidence table has no rows in "
+                "this window, so this is not a statement that the network was quiet. It means the "
+                "measurement did not run or returned nothing to judge."
+            )
+        if in_scope == 0:
+            return (
+                f"No ripple formed, and the reason is scope: {rows} evidence rows were measured "
+                "in the last "
+                f"{window}h but none belong to a monitored host, so nothing could be grouped. "
+                "Check which networks the console is monitoring before reading anything into this."
+            )
+        if short == in_scope:
+            return (
+                f"No ripple formed: all {in_scope} measured rows on {subjects} host(s) had a "
+                "baseline too short to judge, so no p-value was attainable. The lookback is the "
+                "limit here, not the traffic."
+            )
         return (
-            f"No ripple formed in the last {window}h. A ripple needs several pieces of "
-            "evidence lining up on one host in one window, so a quiet result here is not a "
-            "claim that nothing happened: check list_anomalies or top_talkers before "
+            f"No ripple formed in the last {window}h, though {in_scope} evidence rows across "
+            f"{subjects} monitored host(s) were measured"
+            + (
+                f" ({short} of them had a baseline too short to judge)"
+                if short
+                else ""
+            )
+            + ". That is a measured empty result rather than a missing one: nothing lined up "
+            "strongly enough on one host in one window. Check list_anomalies or top_talkers before "
             "concluding a host was idle."
         )
 

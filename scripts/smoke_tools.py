@@ -140,6 +140,32 @@ async def run(base: str) -> int:
             except Exception as exc:  # noqa: BLE001
                 failures.append(f"list_ripples failure shape: {exc}")
                 print(f"  FAIL  list_ripples failure shape: {exc}")
+
+            # FOUR KINDS OF EMPTY, FOUR DIFFERENT SENTENCES. Before the payload carried its
+            # measurement counts, every empty list rendered the same way, which is how "nothing
+            # was measured" and "nothing was in scope" became the same answer to an operator.
+            # One stub value per case, and each must produce its own phrase.
+            empty_cases = {
+                1: "nothing was measured",
+                2: "reason is scope",
+                3: "too short to judge",
+                4: "measured empty result",
+            }
+            for hours_value, expected in empty_cases.items():
+                try:
+                    res = await session.call_tool("list_ripples", {"hours": hours_value})
+                except Exception as exc:  # noqa: BLE001
+                    failures.append(f"list_ripples empty case {hours_value}: {exc}")
+                    print(f"  FAIL  list_ripples empty case {hours_value}: {exc}")
+                    continue
+                body = " ".join(
+                    getattr(c, "text", "") for c in (res.content or [])
+                ).strip()
+                if expected in body.lower():
+                    print(f"  ok    list_ripples empty case {hours_value}: says '{expected}'")
+                else:
+                    failures.append(f"list_ripples empty case {hours_value}: {body[:120]}")
+                    print(f"  FAIL  list_ripples empty case {hours_value}: {body[:100]}")
     uncalled = [t for t in served if t not in CALLS]
     for name in uncalled:
         failures.append(f"{name}: served but never called by this test")

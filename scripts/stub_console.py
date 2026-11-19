@@ -199,6 +199,30 @@ RIPPLES_UNAVAILABLE = {
 }
 
 
+def ripples_empty(*, rows: int, monitored: int, subjects: int, short: int) -> dict:
+    """An empty ripple list, with the measurement counts that say WHICH kind of empty it is.
+
+    Four different facts used to render as one sentence. The counts are what tells them apart:
+    nothing measured, nothing measured in scope, baselines too short, or measured and ungrouped.
+    """
+    return {
+        "available": True,
+        "reason": "",
+        "window_hours": 24,
+        "model_version": "ripple-phase1",
+        "count": 0,
+        "ripples": [],
+        "monitored_networks": ["192.0.2.0/24"],
+        "baseline": {"1h": {"windows": 167}, "6h": {"windows": 27}},
+        "evidence": {
+            "rows": rows,
+            "monitored_rows": monitored,
+            "subjects": subjects,
+            "baseline_short_rows": short,
+        },
+    }
+
+
 def _created_proposal(body: dict) -> dict:
     """The shape the console returns from POST /api/proposals.
 
@@ -249,8 +273,23 @@ class Handler(BaseHTTPRequestHandler):
             for pair in query.split("&"):
                 if pair.startswith("hours="):
                     hours = pair.split("=", 1)[1]
-            if hours in ("999", ""):
+            # One value per empty case, so the four-way distinction can be tested rather than
+            # asserted: 1 nothing measured, 2 measured out of scope, 3 baselines too short,
+            # 4 measured in scope and ungrouped, 999 unreadable.
+            if hours == "999":
                 self._send(RIPPLES_UNAVAILABLE)
+                return
+            if hours == "1":
+                self._send(ripples_empty(rows=0, monitored=0, subjects=0, short=0))
+                return
+            if hours == "2":
+                self._send(ripples_empty(rows=120, monitored=0, subjects=0, short=0))
+                return
+            if hours == "3":
+                self._send(ripples_empty(rows=40, monitored=40, subjects=3, short=40))
+                return
+            if hours == "4":
+                self._send(ripples_empty(rows=200, monitored=200, subjects=5, short=0))
                 return
             payload = RIPPLES
             if os.environ.get("STUB_MUTATE_RIPPLES"):
