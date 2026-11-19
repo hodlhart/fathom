@@ -1,6 +1,6 @@
 <div align="center">
 
-<img src="docs/banner.svg" alt="fathom: an MCP server for the Weirvern console" width="820">
+<img src="docs/banner.png" alt="fathom: an MCP server for the Weirvern console" width="820">
 
 </div>
 
