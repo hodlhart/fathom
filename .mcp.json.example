@@ -1,0 +1,14 @@
+{
+  "mcpServers": {
+    "fathom": {
+      "command": "/absolute/path/to/fathom/.venv/bin/python",
+      "args": [
+        "/absolute/path/to/fathom/server.py"
+      ],
+      "env": {
+        "WEIRVERN_API_URL": "https://your-console.example.com",
+        "WEIRVERN_SESSION_FILE": "/absolute/path/to/agent-token"
+      }
+    }
+  }
+}

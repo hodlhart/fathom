@@ -13,3 +13,6 @@ __pycache__/
 .idea/
 *.swp
 .DS_Store
+
+# Real MCP wiring carries absolute paths for this machine
+.mcp.json

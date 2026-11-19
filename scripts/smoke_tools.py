@@ -1,0 +1,150 @@
+# INF601 - Advanced Programming in Python
+# Samuel Hart
+# Final Project
+
+"""Drive every fathom tool through a real MCP client against the stub console.
+
+WHAT THIS PROVES, AND WHAT IT DOES NOT. It proves the whole path from an MCP
+client call to a formatted answer: argument handling, the HTTP request fathom
+builds, the parse, and the text returned to the model. It does NOT prove the real
+console answers the same way. That is the live check, and pretending otherwise is
+how a demo fails in front of an instructor.
+
+It fails loudly per tool, so one broken tool does not hide behind the others.
+
+    .venv/bin/python scripts/smoke_tools.py
+"""
+
+from __future__ import annotations
+
+import asyncio
+import os
+import subprocess
+import sys
+import time
+from pathlib import Path
+
+from mcp import ClientSession, StdioServerParameters
+from mcp.client.stdio import stdio_client
+
+ROOT = Path(__file__).resolve().parents[1]
+SERVER = ROOT / "server.py"
+STUB = ROOT / "scripts" / "stub_console.py"
+
+# name -> arguments. Every tool fathom exposes must appear here; a tool missing
+# from this list is a tool nobody has ever called, which is the defect this file
+# exists to make impossible to forget.
+CALLS: dict[str, dict] = {
+    "list_anomalies": {"hours": 24, "limit": 5},
+    "hunt_flows": {"src": "192.0.2.0/24", "hours": 24, "limit": 5},
+    "get_host": {"addr": "192.0.2.10"},
+    "get_finding_evidence": {"addr": "192.0.2.10", "start": "2026-11-19T00:00:00"},
+    "query_zeek": {"log": "dns", "hours": 24, "limit": 5},
+    "top_talkers": {"hours": 24, "limit": 5},
+    "dns_names": {"hours": 24, "limit": 5},
+    "alert_audit": {"hours": 24, "limit": 5},
+    "propose_block": {
+        "host": "192.0.2.10",
+        "reason": "steady beacon at a fixed interval with near zero payload",
+        "evidence": "anomaly window 2026-11-19T10:00:00",
+        "ttl_minutes": 60,
+    },
+}
+
+
+def start_stub() -> tuple[subprocess.Popen, str]:
+    """Start the stub on a free port and return it with its base URL."""
+    proc = subprocess.Popen(
+        [sys.executable, str(STUB), "--port", "0"],
+        stdout=subprocess.PIPE,
+        text=True,
+    )
+    line = proc.stdout.readline() if proc.stdout else ""
+    # The stub prints its address; without it there is nothing to point at.
+    for token in line.replace(",", " ").split():
+        if token.startswith("http://"):
+            return proc, token.rstrip("/")
+    proc.kill()
+    raise RuntimeError(f"the stub did not report an address: {line!r}")
+
+
+async def run(base: str) -> int:
+    params = StdioServerParameters(
+        command=sys.executable,
+        args=[str(SERVER)],
+        env={
+            **os.environ,
+            "WEIRVERN_API_URL": base,
+            "WEIRVERN_SESSION": "stub-session-token",
+        },
+    )
+    failures: list[str] = []
+    async with stdio_client(params) as (read, write):
+        async with ClientSession(read, write) as session:
+            await session.initialize()
+            listed = await session.list_tools()
+            served = sorted(t.name for t in listed.tools)
+
+            print(f"  tools served: {len(served)}")
+
+            for name in sorted(CALLS):
+                if name not in served:
+                    failures.append(f"{name}: not served by the server")
+                    print(f"  FAIL  {name}: not served")
+                    continue
+                try:
+                    result = await session.call_tool(name, CALLS[name])
+                except Exception as exc:  # noqa: BLE001
+                    failures.append(f"{name}: {exc}")
+                    print(f"  FAIL  {name}: {exc}")
+                    continue
+                text = " ".join(
+                    getattr(c, "text", "") for c in (result.content or [])
+                ).strip()
+                # MATCH THE SERVER'S OWN FAILURE MARKER, not a guess at English.
+                # _fail() prefixes every tool error with this exact sentence, so a
+                # 404 or a refused credential cannot read as an answer. The first
+                # version of this check looked for text STARTING with "could not"
+                # and missed "fathom could not complete that read", which marked a
+                # 404 as ok. Found by mutation, not by reading.
+                bad = (
+                    not text
+                    or "fathom could not complete" in text
+                    or "traceback" in text.lower()
+                )
+                if bad:
+                    failures.append(f"{name}: {text[:120]}")
+                    print(f"  FAIL  {name}: {text[:100]}")
+                else:
+                    print(f"  ok    {name}: {text.splitlines()[0][:88]}")
+
+    # Both directions: every tool called, and every served tool called.
+    uncalled = [t for t in served if t not in CALLS]
+    for name in uncalled:
+        failures.append(f"{name}: served but never called by this test")
+        print(f"  FAIL  {name}: served but not covered here")
+
+    print("")
+    if failures:
+        print(f"  {len(failures)} tool(s) failed")
+        return 1
+    print(f"  all {len(CALLS)} tools answered")
+    return 0
+
+
+def main() -> int:
+    proc, base = start_stub()
+    try:
+        # Give the listener a moment before the first request lands.
+        time.sleep(0.2)
+        return asyncio.run(run(base))
+    finally:
+        proc.terminate()
+        try:
+            proc.wait(timeout=5)
+        except subprocess.TimeoutExpired:
+            proc.kill()
+
+
+if __name__ == "__main__":
+    sys.exit(main())
