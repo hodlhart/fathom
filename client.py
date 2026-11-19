@@ -33,6 +33,14 @@ API_URL_ENV = "WEIRVERN_API_URL"
 # a forged request.
 SESSION_HEADER = "X-Weirvern-Session"
 
+# THE TWO HEADERS ARE NOT INTERCHANGEABLE. A token minted in console Settings is
+# read from X-Weirvern-Token; a session issued by /api/login is read from
+# X-Weirvern-Session. Sending a token as a session authenticates nothing, and the
+# failure is a plain 401 that says nothing about which header was wrong.
+TOKEN_HEADER = "X-Weirvern-Token"
+TOKEN_ENV = "WEIRVERN_TOKEN"
+TOKEN_FILE_ENV = "WEIRVERN_TOKEN_FILE"
+
 
 def _log(message):
     """Write a diagnostic line to stderr, never to stdout."""
@@ -72,46 +80,70 @@ def base_url():
     return url.rstrip("/")
 
 
-def _session_token():
-    """Return a session token, logging in if only a username and password exist.
+def _read_secret_file(path: str, what: str) -> str:
+    """Read a credential from a file, with an error that names the file.
+
+    A file is preferred over the environment for a long-lived secret: an exported
+    variable is readable from /proc/<pid>/environ by anything running as the same
+    user, and it survives in shell history if it was set inline.
+    """
+    try:
+        with open(os.path.expanduser(path), encoding="utf-8") as handle:
+            value = handle.read().strip()
+    except OSError as exc:
+        raise WeirvernError(
+            f"Could not read the {what} file at {path}: {exc.strerror}."
+        ) from exc
+    if not value:
+        raise WeirvernError(f"The {what} file at {path} is empty.")
+    return value
+
+
+def _credential() -> tuple[str, str]:
+    """Return (header name, value) for the credential fathom should present.
+
+    TWO KINDS OF CREDENTIAL, TWO DIFFERENT HEADERS, and mixing them up fails
+    silently as a 401. The console reads a token minted in Settings from
+    `X-Weirvern-Token` (weirvern/admin/gui_auth.py, AUTH_HEADER) and a login
+    session from `X-Weirvern-Session` (SESSION_HEADER). This module used to send
+    everything as a session, which is why a minted token would never have
+    authenticated.
 
     Order of preference:
-      1. WEIRVERN_SESSION, a token minted elsewhere and handed in.
-      2. WEIRVERN_USERNAME with WEIRVERN_PASSWORD, exchanged at /api/login.
-
-    Returns:
-        str: the session token.
+      1. WEIRVERN_TOKEN or WEIRVERN_TOKEN_FILE: a token minted in the console
+         Settings tab. It carries a role, it is revocable, and it is the right
+         credential for an agent.
+      2. WEIRVERN_SESSION or WEIRVERN_SESSION_FILE: a session token from
+         /api/login, handed in.
+      3. WEIRVERN_USERNAME with WEIRVERN_PASSWORD, exchanged at /api/login now.
 
     Raises:
         WeirvernError: if no credential is configured, or the login is refused.
     """
-    token = os.environ.get("WEIRVERN_SESSION", "").strip()
+    token = os.environ.get(TOKEN_ENV, "").strip()
+    if not token:
+        path = os.environ.get(TOKEN_FILE_ENV, "").strip()
+        if path:
+            token = _read_secret_file(path, "token")
     if token:
-        return token
+        return TOKEN_HEADER, token
 
-    # A file is preferred over the environment for a long-lived secret: an
-    # exported variable is readable from /proc/<pid>/environ by anything running
-    # as the same user, and it survives in shell history if it was set inline.
+    session = os.environ.get("WEIRVERN_SESSION", "").strip()
+    if session:
+        return SESSION_HEADER, session
     path = os.environ.get("WEIRVERN_SESSION_FILE", "").strip()
     if path:
-        try:
-            with open(os.path.expanduser(path), encoding="utf-8") as handle:
-                token = handle.read().strip()
-        except OSError as exc:
-            raise WeirvernError(
-                f"Could not read the session file at {path}: {exc.strerror}."
-            ) from exc
-        if token:
-            return token
-        raise WeirvernError(f"The session file at {path} is empty.")
+        return SESSION_HEADER, _read_secret_file(path, "session")
 
     username = os.environ.get("WEIRVERN_USERNAME", "").strip()
     password = os.environ.get("WEIRVERN_PASSWORD", "")
     if not username or not password:
         raise WeirvernError(
-            "No Weirvern credential is configured. Set WEIRVERN_SESSION_FILE to a "
-            "file holding a session token, or WEIRVERN_SESSION to the token itself, "
-            "or WEIRVERN_USERNAME and WEIRVERN_PASSWORD so fathom can sign in."
+            "No Weirvern credential is configured. Set WEIRVERN_TOKEN_FILE to a "
+            "file holding a token minted in console Settings, or WEIRVERN_TOKEN to "
+            "the token itself. A session from /api/login works through "
+            "WEIRVERN_SESSION_FILE or WEIRVERN_SESSION, and WEIRVERN_USERNAME with "
+            "WEIRVERN_PASSWORD signs in for you."
         )
 
     payload = _send(
@@ -120,8 +152,8 @@ def _session_token():
         body={"username": username, "password": password},
         token=None,
     )
-    token = str(payload.get("session") or "")
-    if not token:
+    session = str(payload.get("session") or "")
+    if not session:
         raise WeirvernError("The login succeeded but returned no session token.")
     if payload.get("must_change"):
         raise WeirvernError(
@@ -129,7 +161,12 @@ def _session_token():
             "Sign in through the console once to finish that."
         )
     _log(f"signed in to Weirvern as {payload.get('username', username)}")
-    return token
+    return SESSION_HEADER, session
+
+
+def _session_token():
+    """The credential value alone, for callers that only need the secret."""
+    return _credential()[1]
 
 
 def _send(method, path, body=None, params=None, token=""):
@@ -160,7 +197,15 @@ def _send(method, path, body=None, params=None, token=""):
         data = json.dumps(body).encode()
         headers["Content-Type"] = "application/json"
     if token:
-        headers[SESSION_HEADER] = token
+        # A tuple carries its own header, so a minted token and a login session
+        # cannot be sent the same way by accident. A bare string is treated as a
+        # session, which is what every caller outside _credential() means.
+        if isinstance(token, tuple):
+            name, value = token
+        else:
+            name, value = SESSION_HEADER, token
+        if value:
+            headers[name] = value
 
     request = urllib.request.Request(url, data=data, headers=headers, method=method)
     try:
@@ -212,7 +257,7 @@ def _send(method, path, body=None, params=None, token=""):
 
 def get(path, params=None, token=None):
     """GET an API path as the configured account."""
-    return _send("GET", path, params=params, token=token or _session_token())
+    return _send("GET", path, params=params, token=token or _credential())
 
 
 # ---------------------------------------------------------------- read helpers
@@ -301,7 +346,7 @@ def write_trail(token=None, **filters):
 
 def post(path, body, token=None):
     """POST an API path as the configured account. The only write fathom performs."""
-    return _send("POST", path, body=body, token=token or _session_token())
+    return _send("POST", path, body=body, token=token or _credential())
 
 
 def propose_block(host, reason, evidence="", ttl_minutes=0, token=None):

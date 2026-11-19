@@ -7,7 +7,7 @@
       ],
       "env": {
         "WEIRVERN_API_URL": "https://your-console.example.com",
-        "WEIRVERN_SESSION_FILE": "/absolute/path/to/agent-token"
+        "WEIRVERN_TOKEN_FILE": "/absolute/path/to/agent-token"
       }
     }
   }
