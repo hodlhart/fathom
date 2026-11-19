@@ -299,6 +299,32 @@ def write_trail(token=None, **filters):
     return get("/api/write-trail", params=filters, token=token)
 
 
+def post(path, body, token=None):
+    """POST an API path as the configured account. The only write fathom performs."""
+    return _send("POST", path, body=body, token=token or _session_token())
+
+
+def propose_block(host, reason, evidence="", ttl_minutes=0, token=None):
+    """Ask Weirvern to consider blocking a host. This ENFORCES NOTHING on its own.
+
+    The proposal is recorded with its reason and evidence, and a person decides in the console. That
+    split is why an agent is allowed to call this at all: a detector that can block directly can take
+    a network away on a bad day.
+    """
+    return post("/api/proposals", {
+        "host": host,
+        "reason": reason,
+        "evidence": evidence,
+        "ttl_minutes": int(ttl_minutes or 0),
+        "proposed_by": "agent:fathom",
+    }, token=token)
+
+
+def proposals(token=None, **filters):
+    """The proposals, optionally filtered by status."""
+    return get("/api/proposals", params=filters, token=token)
+
+
 def dns(token=None, **filters):
     """DNS names seen, for triage of beaconing and command and control."""
     return get("/api/dns", params=filters, token=token)

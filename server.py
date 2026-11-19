@@ -360,6 +360,47 @@ def alert_audit(hours: int = 24, limit: int = 25) -> str:
     return header + ":\n  (nothing in this window)"
 
 
+@mcp.tool()
+def propose_block(host: str, reason: str, evidence: str = "", ttl_minutes: int = 0) -> str:
+    """Propose blocking a host. THIS DOES NOT BLOCK ANYTHING on its own.
+
+    Use this when the evidence points at a host that should be blocked, and say why. The
+    proposal is recorded with your reason and evidence, and an operator decides in the console:
+    nothing is blocked until a person clicks. That is deliberate, and it is why this tool exists
+    at all in a server that is otherwise read-only.
+
+    Be specific and honest in `reason`. An unexplained proposal cannot be reviewed, so it will
+    be dismissed, and a proposal that misstates what was seen is worse than none.
+
+    Args:
+        host: the address or domain to block, for example 192.0.2.10 or ads.example.com.
+        reason: why, in the words you would use to defend it to the operator.
+        evidence: what pointed at it, for example an anomaly window, a rule id, or a URL.
+        ttl_minutes: how long the block should last. 0 means indefinite.
+
+    Returns:
+        A sentence confirming the proposal and its id, or a sentence explaining why it was
+        refused. A refusal names the field that was wrong, so it can be corrected and retried.
+    """
+    try:
+        payload = client.propose_block(host, reason, evidence=evidence, ttl_minutes=ttl_minutes)
+    except client.WeirvernError as exc:
+        return _fail(exc)
+
+    if not isinstance(payload, dict) or not payload.get("ok"):
+        return _summary(payload)
+
+    prop = payload.get("proposal") or {}
+    return (
+        f"Proposed blocking {prop.get('host') or host} (id {prop.get('proposal_id') or '?'}). "
+        f"NOTHING IS BLOCKED YET: an operator must apply it in the console. "
+        f"Duration: {'indefinite' if not prop.get('ttl_minutes') else str(prop['ttl_minutes']) + ' min'}."
+    )
+
+
+# THE ENTRY POINT GOES LAST, and this is not style. `mcp.run()` blocks forever serving stdio, so any
+# `@mcp.tool()` written after it never executes and its tool is never registered. That is exactly what
+# happened to `propose_block`: the file served 8 tools and silently omitted the 9th.
 if __name__ == "__main__":
     client._log("fathom MCP server starting on stdio")
     mcp.run()
