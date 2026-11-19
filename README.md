@@ -38,6 +38,11 @@ describe what the answer will be.
 | `alert_audit` | What the alerting decided and what was done about it |
 | `propose_block` | **Propose** blocking a host. See the boundary below |
 
+**`list_ripples` reads a route that is still being built.** If its payload changes shape, the
+tool says the shape is not understood rather than rendering blank lines, because a renamed field
+would otherwise look like a ripple with nothing in it. Treat that message as no answer, not an
+empty one, and re-check the route.
+
 ## The write boundary
 
 `propose_block` is the only tool that changes anything, and it does not block.

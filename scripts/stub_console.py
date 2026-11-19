@@ -24,7 +24,9 @@ Run it standalone if you want to poke at it with curl:
 from __future__ import annotations
 
 import argparse
+import copy
 import json
+import os
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 # One host reused across payloads so a reader can follow a single story.
@@ -247,7 +249,20 @@ class Handler(BaseHTTPRequestHandler):
             for pair in query.split("&"):
                 if pair.startswith("hours="):
                     hours = pair.split("=", 1)[1]
-            self._send(RIPPLES_UNAVAILABLE if hours in ("999", "") else RIPPLES)
+            if hours in ("999", ""):
+                self._send(RIPPLES_UNAVAILABLE)
+                return
+            payload = RIPPLES
+            if os.environ.get("STUB_MUTATE_RIPPLES"):
+                # STANDS IN FOR THE CONTRACT MOVING. The ripple route is still being built, so a
+                # renamed or dropped key is a real possibility. This shape keeps the envelope and
+                # strips what a ripple is useless without, which is what a rename looks like from
+                # the tool's side.
+                payload = copy.deepcopy(RIPPLES)
+                for ripple in payload["ripples"]:
+                    for key in ("host", "score", "explanation"):
+                        ripple.pop(key, None)
+            self._send(payload)
             return
         routes = {
             "/api/healthz": {"ok": True},

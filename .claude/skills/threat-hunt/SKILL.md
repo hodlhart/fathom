@@ -66,6 +66,9 @@ That is `top_talkers` and a browse, not a hunt.
 
 ## Pitfalls
 
+- `list_ripples` reads a route under construction. If it answers that the shape is not
+  understood, the payload changed: say so, fall back to `list_anomalies`, and do not report an
+  empty result. A shape error and a quiet network are different answers.
 - `propose_block` blocks nothing. It records a proposal a person applies. Reporting a host as
   blocked after calling it is wrong, and it is the kind of wrong that gets acted on.
 - An empty result is ambiguous. No rows can mean "nothing happened" or "the read failed", and

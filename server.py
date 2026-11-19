@@ -446,6 +446,21 @@ def list_ripples(hours: int = 24, limit: int = 10) -> str:
             "concluding a host was idle."
         )
 
+    # THE ROUTE IS STILL BEING BUILT, so its shape can move under this tool. Every field below is
+    # read with .get(), which means a renamed key would print a blank line and look like a quiet
+    # ripple instead of a broken assumption. These three are the ones a ripple is useless without,
+    # so their absence is reported as the contract change it is.
+    required = ("host", "score", "explanation")
+    thin = [r for r in found if not all(r.get(k) not in (None, "") for k in required)]
+    if thin:
+        missing = sorted({k for r in thin for k in required if r.get(k) in (None, "")})
+        return (
+            "The console returned ripples in a shape fathom does not understand: "
+            f"{len(thin)} of {len(found)} are missing {', '.join(missing)}. The ripple route is "
+            "still being built, so its payload may have changed. Treat this as no answer rather "
+            "than an empty one, and re-check the route's shape."
+        )
+
     lines = [f"Ripples in the last {window}h, newest first ({len(found)} found):"]
     for ripple in found[: max(1, limit)]:
         channels = ", ".join(ripple.get("channels") or [])
