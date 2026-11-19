@@ -124,6 +124,78 @@ AUDIT = {
 
 PROPOSALS = {"proposals": [], "total": 0}
 
+# A ripple as weirvern/models/ripple_evidence.overview returns it: a group of evidence for one
+# host in one window, each piece carrying its own scale, p-value and the baseline it beat.
+RIPPLES = {
+    "available": True,
+    "reason": "",
+    "window_hours": 24,
+    "model_version": "ripple-phase1",
+    "count": 1,
+    "ripples": [
+        {
+            "host": HOST,
+            "window_start": WINDOW,
+            "window_end": "2026-11-19T10:30:00",
+            "score": 0.87,
+            "combined_p": 0.00042,
+            "channels": ["flow_bytes", "dns_entropy"],
+            "explanation": (
+                "outbound bytes fell to a twentieth of this host's baseline while DNS query "
+                "entropy rose, in the same window"
+            ),
+            "evidence": [
+                {
+                    "channel": "flow_bytes",
+                    "family": "volume",
+                    "scale": "1h",
+                    "model_id": "baseline",
+                    "model_version": "1",
+                    "score": 0.91,
+                    "pvalue": 0.003,
+                    "freshness_s": 42.0,
+                    "present": True,
+                    "host": HOST,
+                    "observed_at": WINDOW,
+                    "value": 812.0,
+                    "baseline_median": 16800.0,
+                    "sample_count": 167,
+                    "coverage": 0.98,
+                    "direction": "down",
+                },
+                {
+                    "channel": "dns_entropy",
+                    "family": "shape",
+                    "scale": "1h",
+                    "model_id": "baseline",
+                    "model_version": "1",
+                    "score": 0.74,
+                    "pvalue": 0.012,
+                    "freshness_s": 42.0,
+                    "present": True,
+                    "host": HOST,
+                    "observed_at": WINDOW,
+                    "value": 3.9,
+                    "baseline_median": 2.1,
+                    "sample_count": 167,
+                    "coverage": 0.98,
+                    "direction": "up",
+                },
+            ],
+        }
+    ],
+}
+
+# The console answers a failed evidence read with 200 and available:false, so the stub can too.
+RIPPLES_UNAVAILABLE = {
+    "available": False,
+    "reason": "could not read the ripple evidence: OperationalError: clickhouse unavailable",
+    "window_hours": 24,
+    "model_version": "ripple-phase1",
+    "count": 0,
+    "ripples": [],
+}
+
 
 def _created_proposal(body: dict) -> dict:
     """The shape the console returns from POST /api/proposals.
@@ -166,7 +238,17 @@ class Handler(BaseHTTPRequestHandler):
         self.wfile.write(body)
 
     def do_GET(self) -> None:  # noqa: N802
-        path = self.path.split("?", 1)[0]
+        path, _, query = self.path.partition("?")
+        # The unavailable branch is reachable on purpose: hours=999 asks the stub for the shape
+        # the console returns when the evidence cannot be read, so a check can prove the tool
+        # says "could not read" instead of "none formed".
+        if path == "/api/ripples":
+            hours = ""
+            for pair in query.split("&"):
+                if pair.startswith("hours="):
+                    hours = pair.split("=", 1)[1]
+            self._send(RIPPLES_UNAVAILABLE if hours in ("999", "") else RIPPLES)
+            return
         routes = {
             "/api/healthz": {"ok": True},
             "/api/session": {"accounts": True, "role": "admin", "via": "token"},

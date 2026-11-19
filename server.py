@@ -398,6 +398,78 @@ def propose_block(host: str, reason: str, evidence: str = "", ttl_minutes: int =
     )
 
 
+@mcp.tool()
+def list_ripples(hours: int = 24, limit: int = 10) -> str:
+    """Show correlated findings: what grouped into an incident, and the evidence under it.
+
+    A ripple is several pieces of evidence that line up in one time window on one host, each
+    measured against that host's own trailing history with an empirical p-value. START HERE
+    rather than from the raw alert list: the detectors have already done the correlation, and
+    re-deriving it from individual decisions wastes the context and tends to miss the grouping.
+
+    A low combined_p is the strength of the group, not the severity of the traffic. The
+    explanation says what changed and in which direction.
+
+    Args:
+        hours: how far back to look, 1 to 168. Grouping windows are short, so 24 is usually
+            enough and a week is rarely useful.
+        limit: how many ripples to return, newest first.
+
+    Returns:
+        The ripples with their host, score, combined p-value, channels and explanation, each
+        followed by its strongest evidence. When the evidence cannot be read it says so in
+        those words: that is a different answer from "no ripple formed", and treating the two
+        as the same is how a broken query gets reported as a quiet network.
+    """
+    try:
+        payload = client.ripples(hours=hours)
+    except client.WeirvernError as exc:
+        return _fail(exc)
+
+    if not isinstance(payload, dict):
+        return _summary(payload)
+    if not payload.get("available", True):
+        # NOT "no ripples". The read failed, and the operator needs that sentence instead.
+        reason = str(payload.get("reason") or "").strip()
+        return (
+            "The ripple evidence could not be read, so this is NOT a statement that the "
+            f"network was quiet. {reason}"
+        ).strip()
+
+    found = payload.get("ripples") or []
+    window = payload.get("window_hours", hours)
+    if not found:
+        return (
+            f"No ripple formed in the last {window}h. A ripple needs several pieces of "
+            "evidence lining up on one host in one window, so a quiet result here is not a "
+            "claim that nothing happened: check list_anomalies or top_talkers before "
+            "concluding a host was idle."
+        )
+
+    lines = [f"Ripples in the last {window}h, newest first ({len(found)} found):"]
+    for ripple in found[: max(1, limit)]:
+        channels = ", ".join(ripple.get("channels") or [])
+        lines.append("")
+        lines.append(
+            f"  {ripple.get('host') or '?'} at {ripple.get('window_start') or '?'} "
+            f"score {ripple.get('score')} p={ripple.get('combined_p')} [{channels}]"
+        )
+        if ripple.get("explanation"):
+            lines.append(f"    {ripple['explanation']}")
+        for item in (ripple.get("evidence") or [])[:3]:
+            pieces = [str(item.get("channel") or "?")]
+            if item.get("scale"):
+                pieces.append(f"at {item['scale']}")
+            if item.get("direction"):
+                pieces.append(str(item["direction"]))
+            if item.get("pvalue") is not None:
+                pieces.append(f"p={item['pvalue']}")
+            if item.get("value") is not None and item.get("baseline_median") is not None:
+                pieces.append(f"{item['value']} vs baseline {item['baseline_median']}")
+            lines.append("      - " + ", ".join(pieces))
+    return "\n".join(lines)
+
+
 # THE ENTRY POINT GOES LAST, and this is not style. `mcp.run()` blocks forever serving stdio, so any
 # `@mcp.tool()` written after it never executes and its tool is never registered. That is exactly what
 # happened to `propose_block`: the file served 8 tools and silently omitted the 9th.

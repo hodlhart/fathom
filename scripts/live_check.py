@@ -54,6 +54,7 @@ PROBE_REASON = (
 CALLS: list[tuple[str, dict, bool]] = [
     ("propose_block", {"host": PROBE_HOST, "reason": PROBE_REASON,
                        "evidence": "live_check.py", "ttl_minutes": 15}, True),
+    ("list_ripples", {"hours": 24, "limit": 5}, False),
     ("alert_audit", {"hours": 24, "limit": 5}, False),
     ("list_anomalies", {"hours": 24, "limit": 5}, False),
     ("top_talkers", {"hours": 24, "limit": 5}, False),

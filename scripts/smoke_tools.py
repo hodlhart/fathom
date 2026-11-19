@@ -43,6 +43,7 @@ CALLS: dict[str, dict] = {
     "top_talkers": {"hours": 24, "limit": 5},
     "dns_names": {"hours": 24, "limit": 5},
     "alert_audit": {"hours": 24, "limit": 5},
+    "list_ripples": {"hours": 24, "limit": 5},
     "propose_block": {
         "host": "192.0.2.10",
         "reason": "steady beacon at a fixed interval with near zero payload",
@@ -117,8 +118,28 @@ async def run(base: str) -> int:
                     print(f"  FAIL  {name}: {text[:100]}")
                 else:
                     print(f"  ok    {name}: {text.splitlines()[0][:88]}")
-
-    # Both directions: every tool called, and every served tool called.
+            # THE FAILURE SHAPE IS CHECKED SEPARATELY, and INSIDE the session. It sat outside the
+            # `async with` at first and every call on the closed session raised a ClosedResourceError
+            # whose string is empty, so the check reported failure with no reason at all.
+            # A formatting bug here is the defect class this project keeps finding: a read that failed
+            # must not come back looking like a quiet network. The stub answers available:false at 999.
+            try:
+                blind = await session.call_tool("list_ripples", {"hours": 999})
+                blind_text = " ".join(
+                    getattr(c, "text", "") for c in (blind.content or [])
+                ).strip()
+                says_failed = "could not be read" in blind_text
+                says_quiet = "no ripple formed" in blind_text.lower()
+                if says_failed and not says_quiet:
+                    print("  ok    list_ripples: an unreadable evidence set is not reported as quiet")
+                else:
+                    failures.append(
+                        f"list_ripples failure shape: failed={says_failed} quiet={says_quiet}"
+                    )
+                    print(f"  FAIL  list_ripples failure shape: {blind_text[:100]}")
+            except Exception as exc:  # noqa: BLE001
+                failures.append(f"list_ripples failure shape: {exc}")
+                print(f"  FAIL  list_ripples failure shape: {exc}")
     uncalled = [t for t in served if t not in CALLS]
     for name in uncalled:
         failures.append(f"{name}: served but never called by this test")

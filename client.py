@@ -375,6 +375,15 @@ def dns(token=None, **filters):
     return get("/api/dns", params=filters, token=token)
 
 
+def ripples(hours=24, token=None):
+    """Ripple evidence: correlated findings, with the evidence they were grouped from.
+
+    Answers 200 with `available: false` and a reason when the evidence cannot be read,
+    rather than raising, so the caller has to tell "could not read" apart from "none formed".
+    """
+    return get("/api/ripples", params={"hours": hours}, token=token)
+
+
 def episodes(token=None, **filters):
     """Correlated activity episodes."""
     return get("/api/episodes", params=filters, token=token)

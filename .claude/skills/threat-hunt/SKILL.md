@@ -24,8 +24,17 @@ That is `top_talkers` and a browse, not a hunt.
 
 ## Procedure
 
+0. Start with the correlation the detectors already did. Call `list_ripples(hours=24)`.
+   A ripple is several pieces of evidence on one host in one window, each measured against that
+   host's own trailing history, with a combined p-value and a plain-language explanation. It
+   answers "what looks like ONE incident" rather than "what fired once".
+   Done when you know which hosts have a grouped story, or that none did. If the tool says the
+   evidence could not be read, say that and stop: it is not a quiet network, and treating it as
+   one is the mistake this tool exists to prevent.
+
 1. Establish what fired. Call `list_anomalies(hours=24)`.
-   Done when you have the host, the score, and which models contributed to it.
+   Done when you have the host, the score, and which models contributed to it. If step 0 found a
+   ripple for a host, start the rest of this procedure with THAT host.
 2. Read what the alerting already decided. Call `alert_audit(hours=24)`.
    Done when you know whether this finding was reviewed and what the disposition was. A
    finding already adjudicated as benign is a different conversation from a new one.

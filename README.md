@@ -7,10 +7,10 @@
 # fathom
 
 An [MCP](https://modelcontextprotocol.io) server that puts the Weirvern console in
-front of a model as nine callable tools, so an investigation happens inside the
+front of a model as ten callable tools, so an investigation happens inside the
 agent loop instead of in a terminal someone is copying output out of.
 
-Nine tools. Eight read. One writes, and it files a proposal rather than a block.
+Ten tools. Nine read. One writes, and it files a proposal rather than a block.
 
 ## Why it exists
 
@@ -27,6 +27,7 @@ describe what the answer will be.
 
 | Tool | What it answers |
 |---|---|
+| `list_ripples` | What grouped into one incident, with the evidence underneath it |
 | `list_anomalies` | What did the detectors flag recently, highest score first |
 | `hunt_flows` | Flows for one host, one port or one protocol |
 | `get_host` | What is known about a host: name, volume, peers, ports, timeline |
@@ -72,7 +73,7 @@ deployment's address is environment specific and does not belong in a repository
 
 In the console: **Settings → Tokens → New token**. Choose the role:
 
-- **readonly** (the console's `viewer` role) for the eight read tools
+- **readonly** (the console's `viewer` role) for the nine read tools
 - **admin** if you want `propose_block` to file anything
 
 The token is shown once. Save it to a file only you can read:
@@ -166,7 +167,7 @@ project.
 ## Layout
 
 ```
-server.py                  the MCP server: nine tools, stderr logging only
+server.py                  the MCP server: ten tools, stderr logging only
 client.py                  the console API client, one credential path
 scripts/check_tools.py     registration guard, no dependencies
 scripts/smoke_tools.py     every tool against a stub console
