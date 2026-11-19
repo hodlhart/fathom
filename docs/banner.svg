@@ -1,0 +1,43 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 900 240" role="img"
+     aria-label="fathom, an MCP server for Weirvern">
+  <!--
+    The Weirvern mark, unchanged: flow lines broken by a gate, in the console's own
+    palette (#131416 canvas, #dee0e3 flow, #4797ff gate). Paths copied verbatim from
+    weirvern/admin/web/logo.svg so this banner cannot drift from the real mark.
+
+    "MCP" sits over the plate's lower band rather than across its centre: laid over the
+    full mark, the gate bar lands on the C and the two read as one smudged glyph.
+  -->
+  <rect width="900" height="240" fill="#131416"/>
+  <rect x="0" y="0" width="900" height="3" fill="#4797ff" opacity=".85"/>
+
+  <!-- the plate, with MCP set into its lower band -->
+  <g transform="translate(52 40)">
+    <rect width="160" height="160" rx="34" fill="#1c1e21"/>
+    <rect x="1" y="1" width="158" height="158" rx="33" fill="none"
+          stroke="#dee0e3" stroke-opacity=".07"/>
+
+    <!-- the mark itself, scaled 64 -> 112 and centred in the upper area -->
+    <g transform="translate(24 12) scale(1.75)">
+      <path d="M13 22h38M13 42h38" stroke="#dee0e3" stroke-width="4"
+            stroke-linecap="round" opacity=".5"/>
+      <path d="M13 32h11M40 32h11" stroke="#dee0e3" stroke-width="4"
+            stroke-linecap="round" opacity=".5"/>
+      <rect x="28" y="24" width="8" height="16" rx="2.5" fill="#4797ff"/>
+    </g>
+
+    <!-- MCP over the plate -->
+    <text x="80" y="146" text-anchor="middle"
+          font-family="ui-sans-serif, system-ui, sans-serif"
+          font-size="30" font-weight="700" letter-spacing="4"
+          fill="#f9fafa">MCP</text>
+  </g>
+
+  <!-- wordmark -->
+  <text x="248" y="116" font-family="ui-sans-serif, system-ui, sans-serif"
+        font-size="52" font-weight="650" letter-spacing="-1" fill="#f9fafa">fathom</text>
+  <text x="250" y="152" font-family="ui-sans-serif, system-ui, sans-serif"
+        font-size="19" fill="#b7bcc2">An MCP server for the Weirvern console</text>
+  <text x="250" y="190" font-family="ui-monospace, SFMono-Regular, monospace"
+        font-size="15" fill="#737c87">9 tools · read-only by default · one gated write</text>
+</svg>
