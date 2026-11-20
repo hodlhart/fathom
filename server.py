@@ -394,7 +394,9 @@ def propose_block(host: str, reason: str, evidence: str = "", ttl_minutes: int =
     return (
         f"Proposed blocking {prop.get('host') or host} (id {prop.get('proposal_id') or '?'}). "
         f"NOTHING IS BLOCKED YET: an operator must apply it in the console. "
-        f"Duration: {'indefinite' if not prop.get('ttl_minutes') else str(prop['ttl_minutes']) + ' min'}."
+        "Duration: "
+        + ("indefinite" if not prop.get("ttl_minutes") else str(prop["ttl_minutes"]) + " min")
+        + "."
     )
 
 
@@ -403,9 +405,17 @@ def list_ripples(hours: int = 24, limit: int = 10) -> str:
     """Show correlated findings: what grouped into an incident, and the evidence under it.
 
     A ripple is several pieces of evidence that line up in one time window on one host, each
-    measured against that host's own trailing history with an empirical p-value. START HERE
-    rather than from the raw alert list: the detectors have already done the correlation, and
-    re-deriving it from individual decisions wastes the context and tends to miss the grouping.
+    measured against that host's own trailing history. START HERE rather than from the raw alert
+    list: the detectors have already done the correlation, and re-deriving it from individual
+    decisions wastes the context and tends to miss the grouping.
+
+    How one forms, in the engine's own terms: two or more distinct FAMILIES significant at
+    p <= 0.01 in the same window, or exactly one family at p <= 0.001. The second case is reported
+    as a single family with nothing corroborating it, which is a weaker statement than it looks.
+
+    `score` is the joint surprise, the sum of -log10(p) over the significant families, so it ranks
+    ripples and is not a probability. `combined_p` is the calibrated combination of the same
+    p-values. `severity` is the engine's own band over those two, not a judgement this tool makes.
 
     A low combined_p is the strength of the group, not the severity of the traffic. The
     explanation says what changed and in which direction.
@@ -416,10 +426,10 @@ def list_ripples(hours: int = 24, limit: int = 10) -> str:
         limit: how many ripples to return, newest first.
 
     Returns:
-        The ripples with their host, score, combined p-value, channels and explanation, each
-        followed by its strongest evidence. When the evidence cannot be read it says so in
-        those words: that is a different answer from "no ripple formed", and treating the two
-        as the same is how a broken query gets reported as a quiet network.
+        The ripples with their host, score, severity, families, combined p-value and explanation,
+        each followed by its strongest evidence. When the evidence cannot be read it says so in
+        those words: that is a different answer from "no ripple formed", and treating the two as
+        the same is how a broken query gets reported as a quiet network.
     """
     try:
         payload = client.ripples(hours=hours)
@@ -449,6 +459,27 @@ def list_ripples(hours: int = 24, limit: int = 10) -> str:
         in_scope = int(counts.get("monitored_rows") or 0)
         subjects = int(counts.get("subjects") or 0)
         short = int(counts.get("baseline_short_rows") or 0)
+        undecided = int(counts.get("insufficient_rows") or 0)
+
+        # WHAT THE DEPLOYMENT COULD MEASURE AT ALL. A scale is only usable when its lookback
+        # holds enough windows, and the lookback is derived from the retention in force, so a
+        # short retention quietly removes scales. Without this the reader cannot tell "nothing
+        # lined up" from "only one scale was even available, so nothing could corroborate".
+        retention = payload.get("retention") or {}
+        retention_days = retention.get("days")
+        methods = payload.get("methods") or {}
+        scales = sorted((methods.get("by_scale") or {}).keys())
+        scale_note = ""
+        if scales:
+            scale_note = f" Scales measured: {', '.join(scales)}"
+            if retention_days is not None:
+                scale_note += f" (retention {retention_days}d, source: {retention.get('source')})"
+            scale_note += (
+                ". One scale is enough when two families line up at it, but a "
+                "deployment holding a short retention may only be able to see one."
+              if len(scales) == 1
+              else "."
+            )
 
         if rows == 0:
             return (
@@ -462,6 +493,12 @@ def list_ripples(hours: int = 24, limit: int = 10) -> str:
                 "in the last "
                 f"{window}h but none belong to a monitored host, so nothing could be grouped. "
                 "Check which networks the console is monitoring before reading anything into this."
+            )
+        if undecided == in_scope:
+            return (
+                f"No ripple formed and none could have: all {in_scope} measured rows on "
+                f"{subjects} host(s) were marked insufficient, so the test did not have enough "
+                "samples to decide either way. This is a measurement gap, not a quiet network."
             )
         if short == in_scope:
             return (
@@ -480,6 +517,7 @@ def list_ripples(hours: int = 24, limit: int = 10) -> str:
             + ". That is a measured empty result rather than a missing one: nothing lined up "
             "strongly enough on one host in one window. Check list_anomalies or top_talkers before "
             "concluding a host was idle."
+            + scale_note
         )
 
     # THE ROUTE IS STILL BEING BUILT, so its shape can move under this tool. Every field below is
@@ -500,11 +538,24 @@ def list_ripples(hours: int = 24, limit: int = 10) -> str:
     lines = [f"Ripples in the last {window}h, newest first ({len(found)} found):"]
     for ripple in found[: max(1, limit)]:
         channels = ", ".join(ripple.get("channels") or [])
+        families = ", ".join(ripple.get("families") or [])
+        severity = str(ripple.get("severity") or "").strip()
+        # ONE FAMILY IS NOT CORROBORATION. A ripple can form on a single family when that family
+        # clears the extreme bar, and calling that "an incident with three signals" would overstate
+        # it. The engine flags it, so the line does too.
+        corroboration = (
+            "one family only, corroborated by nothing else"
+            if ripple.get("single_family")
+            else f"{len(ripple.get('families') or [])} independent families: {families}"
+        )
         lines.append("")
         lines.append(
             f"  {ripple.get('host') or '?'} at {ripple.get('window_start') or '?'} "
-            f"score {ripple.get('score')} p={ripple.get('combined_p')} [{channels}]"
+            f"score {ripple.get('score')} p={ripple.get('combined_p')}"
+          + (f" severity {severity}" if severity else "")
+          + f" [{channels}]"
         )
+        lines.append(f"    {corroboration}")
         if ripple.get("explanation"):
             lines.append(f"    {ripple['explanation']}")
         for item in (ripple.get("evidence") or [])[:3]:
@@ -522,8 +573,8 @@ def list_ripples(hours: int = 24, limit: int = 10) -> str:
 
 
 # THE ENTRY POINT GOES LAST, and this is not style. `mcp.run()` blocks forever serving stdio, so any
-# `@mcp.tool()` written after it never executes and its tool is never registered. That is exactly what
-# happened to `propose_block`: the file served 8 tools and silently omitted the 9th.
+# `@mcp.tool()` written after it never executes and its tool is never registered. That is exactly
+# what happened to `propose_block`: the file served 8 tools and silently omitted the 9th.
 if __name__ == "__main__":
     client._log("fathom MCP server starting on stdio")
     mcp.run()

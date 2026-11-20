@@ -141,7 +141,7 @@ async def run(base: str) -> int:
                 failures.append(f"list_ripples failure shape: {exc}")
                 print(f"  FAIL  list_ripples failure shape: {exc}")
 
-            # FOUR KINDS OF EMPTY, FOUR DIFFERENT SENTENCES. Before the payload carried its
+            # EVERY KIND OF EMPTY, AND EACH WITH ITS OWN SENTENCE. Before the payload carried its
             # measurement counts, every empty list rendered the same way, which is how "nothing
             # was measured" and "nothing was in scope" became the same answer to an operator.
             # One stub value per case, and each must produce its own phrase.
@@ -150,7 +150,19 @@ async def run(base: str) -> int:
                 2: "reason is scope",
                 3: "too short to judge",
                 4: "measured empty result",
+                5: "marked insufficient",
+                6: "one family only",
             }
+            # A ripple that rests on one family must say so, and must name its severity band.
+            res = await session.call_tool("list_ripples", {"hours": 24})
+            body = " ".join(getattr(c, "text", "") for c in (res.content or [])).strip()
+            for needle in ("severity", "independent families"):
+                if needle not in body:
+                    failures.append(f"list_ripples does not report {needle}")
+                    print(f"  FAIL  list_ripples does not report {needle}")
+                else:
+                    print(f"  ok    list_ripples reports {needle}")
+
             for hours_value, expected in empty_cases.items():
                 try:
                     res = await session.call_tool("list_ripples", {"hours": hours_value})

@@ -134,14 +134,27 @@ RIPPLES = {
     "window_hours": 24,
     "model_version": "ripple-phase1",
     "count": 1,
+    "signature_channels": ["conn_dst", "dns_query"],
+    "severity_bands": {"low": {"min_score": 3.0, "min_families": 1},
+                       "medium": {"min_score": 4.0, "min_families": 2},
+                       "high": {"min_score": 6.0, "min_families": 3}},
+    "retention": {"days": 7, "source": "ttl", "reason": "", "tables": {}, "unknown": []},
+    "methods": {"by_method": {"empirical": 2}, "by_scale": {"1h": {"empirical": 2}},
+                "tail_scales": [], "tail_kinds": [], "observed_windows": {"1h": 167,
+                                                                          "6h": 27,
+                                                                          "24h": 6,
+                                                                          "7d": 0}},
     "ripples": [
         {
             "host": HOST,
             "window_start": WINDOW,
             "window_end": "2026-11-19T10:30:00",
-            "score": 0.87,
+            "score": 8.31,
             "combined_p": 0.00042,
             "channels": ["flow_bytes", "dns_entropy"],
+            "families": ["dns", "flow"],
+            "single_family": False,
+            "severity": "medium",
             "explanation": (
                 "outbound bytes fell to a twentieth of this host's baseline while DNS query "
                 "entropy rose, in the same window"
@@ -199,7 +212,8 @@ RIPPLES_UNAVAILABLE = {
 }
 
 
-def ripples_empty(*, rows: int, monitored: int, subjects: int, short: int) -> dict:
+def ripples_empty(*, rows: int, monitored: int, subjects: int, short: int,
+                  insufficient: int = 0) -> dict:
     """An empty ripple list, with the measurement counts that say WHICH kind of empty it is.
 
     Four different facts used to render as one sentence. The counts are what tells them apart:
@@ -211,6 +225,12 @@ def ripples_empty(*, rows: int, monitored: int, subjects: int, short: int) -> di
         "window_hours": 24,
         "model_version": "ripple-phase1",
         "count": 0,
+        "signature_channels": [],
+        "severity_bands": {"low": {"min_score": 3.0, "min_families": 1}},
+        "retention": {"days": 7, "source": "ttl", "reason": "", "tables": {}, "unknown": []},
+        "methods": {"by_method": {}, "by_scale": {"1h": {"empirical": 0}}, "tail_scales": [],
+                    "tail_kinds": [], "observed_windows": {"1h": 167, "6h": 27, "24h": 6,
+                                                           "7d": 0}},
         "ripples": [],
         "monitored_networks": ["192.0.2.0/24"],
         "baseline": {"1h": {"windows": 167}, "6h": {"windows": 27}},
@@ -219,6 +239,7 @@ def ripples_empty(*, rows: int, monitored: int, subjects: int, short: int) -> di
             "monitored_rows": monitored,
             "subjects": subjects,
             "baseline_short_rows": short,
+            "insufficient_rows": insufficient,
         },
     }
 
@@ -290,6 +311,21 @@ class Handler(BaseHTTPRequestHandler):
                 return
             if hours == "4":
                 self._send(ripples_empty(rows=200, monitored=200, subjects=5, short=0))
+                return
+            if hours == "5":
+                self._send(ripples_empty(rows=66, monitored=66, subjects=22, short=0,
+                                         insufficient=66))
+                return
+            if hours == "6":
+                # A single-family ripple: legal in the engine when one family clears the extreme
+                # bar, and it must not be presented as corroborated.
+                payload = copy.deepcopy(RIPPLES)
+                payload["ripples"][0].update({
+                    "channels": ["dns_entropy"], "families": ["dns"], "single_family": True,
+                    "score": 3.2, "combined_p": 0.0006, "severity": "low",
+                })
+                payload["count"] = 1
+                self._send(payload)
                 return
             payload = RIPPLES
             if os.environ.get("STUB_MUTATE_RIPPLES"):

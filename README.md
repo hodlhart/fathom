@@ -27,7 +27,7 @@ describe what the answer will be.
 
 | Tool | What it answers |
 |---|---|
-| `list_ripples` | What grouped into one incident, with the evidence underneath it |
+| `list_ripples` | What grouped into one incident, its severity, and the evidence under it |
 | `list_anomalies` | What did the detectors flag recently, highest score first |
 | `hunt_flows` | Flows for one host, one port or one protocol |
 | `get_host` | What is known about a host: name, volume, peers, ports, timeline |
@@ -38,15 +38,22 @@ describe what the answer will be.
 | `alert_audit` | What the alerting decided and what was done about it |
 | `propose_block` | **Propose** blocking a host. See the boundary below |
 
-**`list_ripples` says which kind of empty it is.** An empty ripple list has four different
+**`list_ripples` says which kind of empty it is.** An empty ripple list has several different
 meanings and the payload carries the counts that tell them apart: nothing was measured, nothing
-measured was inside a monitored network, the baselines were too short to judge, or it was measured
-and nothing grouped. Each gets its own sentence, because "no ripple" on its own has been read as a
-quiet network when it meant a broken read.
+measured was inside a monitored network, the rows were too few to decide, the baselines were too
+short to judge, or it was measured and nothing grouped. Each gets its own sentence, because "no
+ripple" on its own has been read as a quiet network when it meant a broken read. The empty answer
+also names the scales the deployment could measure and the retention they came from, since a short
+retention quietly removes scales rather than reporting that it did.
 
-The route is young and still moving. If its payload loses a field the tool needs, it says the shape
-is not understood rather than rendering blanks, since a renamed key would otherwise look like a
-ripple with nothing in it. Treat that as no answer, not an empty one.
+**One family is not corroboration.** A ripple can form on a single family when that family clears
+the extreme bar, and the tool says so on its own line instead of listing it beside the corroborated
+ones as if they were the same claim. `severity` is the engine's own band, not a judgement fathom
+makes, and `score` is the joint surprise used to rank, not a probability.
+
+If the payload loses a field the tool needs, it says the shape is not understood rather than
+rendering blanks, since a renamed key would otherwise look like a ripple with nothing in it. The
+route has moved twice already, so that guard stays. Treat it as no answer, not an empty one.
 
 ## The write boundary
 
