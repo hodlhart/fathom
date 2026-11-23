@@ -12,6 +12,15 @@ agent loop instead of in a terminal someone is copying output out of.
 
 Ten tools. Nine read. One writes, and it files a proposal rather than a block.
 
+Part of the [Weirvern](https://github.com/hodlhart/weirvern) project: the console,
+the detectors and the sensor fleet live in that repository, and fathom is the
+agent-facing read layer over its API. It needs a running console; it is not a
+standalone passive sensor.
+
+[![tests](https://github.com/hodlhart/fathom/actions/workflows/tests.yml/badge.svg)](https://github.com/hodlhart/fathom/actions/workflows/tests.yml)
+[![license](https://img.shields.io/badge/license-MIT-2f81f7)](LICENSE)
+[![python](https://img.shields.io/badge/python-3.10%2B-2f81f7)](requirements.txt)
+
 ## Why it exists
 
 Weirvern collects flows, DNS, Zeek logs and detector decisions, and its console
@@ -30,12 +39,12 @@ describe what the answer will be.
 | `list_ripples` | What grouped into one incident, its severity, and the evidence under it |
 | `list_anomalies` | What did the detectors flag recently, highest score first |
 | `hunt_flows` | Flows for one host, one port or one protocol |
-| `get_host` | What is known about a host: name, volume, peers, ports, timeline |
+| `get_host` | What is known about a host: volume, peers, ports, services |
 | `get_finding_evidence` | The evidence behind one finding, as the console argues it |
 | `query_zeek` | One Zeek log (dns, ssl, http, conn) |
 | `top_talkers` | The shape of the traffic: loudest talkers, protocol mix, busiest ports |
 | `dns_names` | Names hosts resolved recently, for command and control triage |
-| `alert_audit` | What the alerting decided and what was done about it |
+| `alert_audit` | The pipeline's self-audit: silent sensors, expired rules, unreadable checks |
 | `propose_block` | **Propose** blocking a host. See the boundary below |
 
 **`list_ripples` says which kind of empty it is.** An empty ripple list has several different
@@ -69,54 +78,128 @@ directly can do it for a reason that reads convincing and is wrong. Filing a
 proposal costs an operator three seconds and preserves the one check that is hard
 to automate: a human reading the reasoning.
 
-It needs an **admin** token. A readonly token reads everything and gets a 403 here,
-which is the design working rather than a fault.
+It needs an **admin** credential. A viewer token reads everything and gets a 403
+here, which is the design working rather than a fault.
 
-## Setup
+## Install
 
-Three environment variables. There is no default address on purpose: a
-deployment's address is environment specific and does not belong in a repository.
-
-| Variable | Meaning |
-|---|---|
-| `WEIRVERN_API_URL` | The console address, for example `https://console.example.com` |
-| `WEIRVERN_TOKEN_FILE` | A file holding a token minted in Settings. Preferred. |
-| `WEIRVERN_TOKEN` | The token itself, for a throwaway run. Avoid: shell history, `/proc` |
-| `WEIRVERN_CA_BUNDLE` | Optional. The console's CA certificate, if it does not use a public one |
-| `WEIRVERN_SESSION_FILE` / `WEIRVERN_SESSION` | A `/api/login` session, if that is what you have |
-| `WEIRVERN_USERNAME` + `WEIRVERN_PASSWORD` | Signs in for you and uses the session |
-
-### Mint a token
-
-In the console: **Settings → Tokens → New token**. Choose the role:
-
-- **readonly** (the console's `viewer` role) for the nine read tools
-- **admin** if you want `propose_block` to file anything
-
-The token is shown once. Save it to a file only you can read:
+Python 3.10 or newer, which is what `mcp` itself requires.
 
 ```bash
-umask 077 && cat > ~/.weirvern-agent-token
-# paste, Enter, then Ctrl-D
-chmod 600 ~/.weirvern-agent-token
-```
-
-**A token and a session travel in different headers**, and the distinction is not
-cosmetic. A minted token goes in `X-Weirvern-Token`; a session from `/api/login`
-goes in `X-Weirvern-Session`. Sending a token as a session authenticates nothing
-and the console answers a plain 401 that names neither.
-
-### Install
-
-```bash
+git clone https://github.com/hodlhart/fathom.git
+cd fathom
 python -m venv .venv
 .venv/bin/pip install -r requirements.txt
 ```
 
-## Wire it into Claude Code
+On Windows the interpreter is `.venv\Scripts\python.exe`; everything else below is
+the same. To run the test suite as well, install the development pins:
 
-Commit-ready example: [`.mcp.json.example`](.mcp.json.example). Copy it to
-`.mcp.json` and put in absolute paths, because Claude Code spawns the interpreter
+```bash
+.venv/bin/pip install -r requirements-dev.txt
+```
+
+## Configuration
+
+There is no default address on purpose: a deployment's address is environment
+specific and does not belong in a repository. Fathom reads its configuration from
+the environment of the process the MCP client spawns.
+
+| Variable | Meaning |
+|---|---|
+| `WEIRVERN_API_URL` | **Required.** The console base URL, for example `https://console.example.com`, with no `/api` suffix |
+| `WEIRVERN_TOKEN_FILE` | A file holding a token minted in the console. Preferred. |
+| `WEIRVERN_TOKEN` | The token itself, for a throwaway run. Avoid: shell history and `/proc` |
+| `WEIRVERN_SESSION_FILE` | A file holding a session from `/api/login` |
+| `WEIRVERN_SESSION` | The session value itself |
+| `WEIRVERN_USERNAME` + `WEIRVERN_PASSWORD` | Sign in at `/api/login` when no token or session is set |
+| `WEIRVERN_CA_BUNDLE` | Optional. The console's CA certificate, if it does not use a public one |
+
+The order is token, then session, then username/password. The first one set wins.
+
+**A token and a session travel in different headers**, and the distinction is not
+cosmetic. A minted token goes in `X-Weirvern-Token`; a session from `/api/login`
+goes in `X-Weirvern-Session`. Sending a token as a session authenticates nothing
+and the console answers a plain 401 that names neither. That is why the variable
+names matter: `WEIRVERN_TOKEN_FILE` for a token, `WEIRVERN_SESSION` for a session.
+
+### Generate a token in Weirvern
+
+The console can mint a scoped credential, and that is the right thing to give an
+agent: it carries a role, it is revocable on its own, and it is attributable in the
+audit log. The path below is the one in the console source
+(`weirvern/admin/web/index.html`, card `st-tokens-card`; route
+`POST /api/tokens/create` in `weirvern/admin/flask_app.py`).
+
+1. **Sign in to the console as an admin.** Token management is account-only: a
+   token cannot mint or revoke another token, because a credential that can do
+   that can outlive its own revocation.
+2. **Open Settings** in the console navigation (the last group of tabs, beside
+   Logs).
+3. **Find the API tokens card.**
+4. **Create the token.** Type a name in the field whose placeholder is
+   *"what is it for"*, choose the role, then click **Create token**:
+   - **viewer** — read-only. This is the role for the nine read tools. (The
+     console calls it `viewer`; there is no separate "readonly" role name.)
+   - **admin** — only if `propose_block` must be able to file a proposal. A
+     viewer token gets 403 on that one tool.
+5. **Copy the value at creation time.** It appears in the field labelled *"the new
+   token; copy it now"* and is never shown again: the store keeps a display prefix
+   and a SHA-256 digest, so a lost token is revoked and replaced, not recovered.
+6. **Store it outside the repository**, in a file only you can read. Paste at the
+   prompt rather than putting the value on a command line, where it would land in
+   shell history:
+
+   ```bash
+   umask 077 && cat > ~/.weirvern-agent-token
+   # paste the token, press Enter, then Ctrl-D
+   chmod 600 ~/.weirvern-agent-token
+   ```
+
+   Do not commit it, paste it into a README, an issue, or a chat message. If your
+   client cannot pass a file path, the value can live in the server's `env` block
+   instead, as `WEIRVERN_TOKEN` — that is the variable the client reads, and the
+   one that travels in `X-Weirvern-Token`. Do not put a minted token in
+   `WEIRVERN_SESSION`: that variable is for a login session and a different
+   header. `.mcp.json` is gitignored here for exactly this reason; keep it at mode
+   600 and never commit it.
+
+**If "Create token" answers 502.** The card is present but the deployment cannot
+mint: the console's GUI pod must run with `serviceAccountName: weirvern-operator`
+and a mounted service-account token. Without it the route answers
+`could not create the token: no ServiceAccount token at
+/var/run/secrets/kubernetes.io/serviceaccount/token`. This was observed against a
+running demo console on 2026-11-23. When that is the deployment you have, use a
+signed-in session instead (`WEIRVERN_SESSION` / `WEIRVERN_SESSION_FILE`, or
+`WEIRVERN_USERNAME` + `WEIRVERN_PASSWORD` and let fathom sign in), or ask the
+operator to fix the service account. A session reads the same nine tools; it
+belongs to a person rather than to the automation, so it is revoked by signing out.
+
+**Verify the credential before wiring the agent:**
+
+```bash
+WEIRVERN_API_URL=https://console.example.com \
+WEIRVERN_TOKEN_FILE=$HOME/.weirvern-agent-token \
+.venv/bin/python scripts/live_check.py
+```
+
+`live_check.py` calls `propose_block` first, because it is the only call that
+proves the admin role arrived. It then reads the rest. A failure is diagnosed in
+one line:
+
+- **401** — the credential is wrong, expired, or sent in the wrong header. A token
+  in `WEIRVERN_SESSION` is the common version of the last one.
+- **403** — the credential is valid but the role is too low. On `propose_block`
+  alone that means a viewer token; on every read it means the account cannot read
+  the console at all.
+- **a certificate error** — point `WEIRVERN_CA_BUNDLE` at the console's CA.
+- **"Could not reach Weirvern"** — `WEIRVERN_API_URL` is wrong or the console is
+  down.
+
+## Wire it into an MCP client
+
+A commit-ready example lives at [`.mcp.json.example`](.mcp.json.example). Copy it to
+`.mcp.json` and put in absolute paths, because the client spawns the interpreter
 directly:
 
 ```json
@@ -135,6 +218,10 @@ directly:
 }
 ```
 
+`WEIRVERN_CA_BUNDLE` is optional; delete that line when the console uses a
+publicly trusted certificate. For Claude Desktop and other clients, and for
+installing the `threat-hunt` skill, see [docs/SETUP.md](docs/SETUP.md).
+
 Then, once:
 
 ```bash
@@ -142,16 +229,64 @@ claude mcp list     # fathom should appear; a project-scoped server needs one ap
 claude              # then: "hunt for beaconing in the last 24 hours"
 ```
 
-Fathom is a **stdio** server: Claude Code spawns it per session and kills it at the
+Fathom is a **stdio** server: the client spawns it per session and kills it at the
 end. There is no port and no address. Anything printed to stdout corrupts the
 protocol, which is why diagnostics go to stderr.
 
+## Usage
+
+Ask questions, not commands. The tools describe themselves well enough that the
+model picks the right one:
+
+- "Anything correlated in the last 24 hours? Start from the ripples."
+- "192.0.2.10 looked odd yesterday. Who did it talk to, and what names did it resolve?"
+- "Show me the evidence behind that finding, not just the score."
+- "Is the deployment healthy? Any sensor silent or rule expired?"
+- "Propose a block for that host for an hour, with the evidence attached."
+
+A full worked investigation, with every call and answer, is in
+[docs/transcript.md](docs/transcript.md).
+
+## Failure modes and limitations
+
+| Symptom | What it means | What to do |
+|---|---|---|
+| `WEIRVERN_API_URL is not set` | The client did not pass the environment | Put it in the server's `env` block |
+| `Weirvern refused the credential (401)` | Wrong or expired credential, or a token sent as a session | Check the value and the header; mint a new token if needed |
+| `(403)` on every read | The credential cannot read the console | Use a viewer or admin token for this deployment |
+| `(403)` only on `propose_block` | Valid viewer token | Mint an admin token, or do not propose |
+| `No such Weirvern resource (404)` | The route is not served at that address | `WEIRVERN_API_URL` must be the console root, not a path or a proxy prefix |
+| `certificate is not trusted` | The console's CA is not in the system store | Set `WEIRVERN_CA_BUNDLE` |
+| `Could not load the CA bundle` | `WEIRVERN_CA_BUNDLE` points at nothing | Fix the path, or unset it |
+| `Could not reach Weirvern` | Wrong address, console down, or a timeout | Check the console; every request is bounded at 25 seconds |
+| `returned something that is not JSON` | A proxy or login page answered instead of the API | Check the address and whether a reverse proxy rewrote it |
+| `shape fathom does not understand` | The ripple route changed a field the tool needs | Treat it as no answer; re-check the route's shape |
+
+Limits worth knowing before trusting an answer:
+
+- **Nine reads, one proposal.** No tool blocks, dismisses, acknowledges or changes
+  a detector. A proposal enforces nothing until an operator applies it.
+- **No pagination.** Reads return a bounded page (`limit`, default 10 to 25) and the
+  text says when rows were cut. It is not a data export; use the console's own
+  exports for that.
+- **Text, not JSON.** Columns are truncated to keep the model's context small.
+  Long evidence lives in the console; audit findings carry a `fix` that names the
+  view that owns them.
+- **One console per process.** Configuration is read from the environment, so a
+  session is bound to one deployment.
+- **The ripple route is still moving.** Its fields have changed twice; the guard
+  reports a rename as a contract change rather than printing blanks.
+- **`alert_audit` is the pipeline auditing itself**, not a log of alert decisions.
+  It answers "are the sensors and rules healthy", not "what happened after this
+  alert".
+- **No live console in the tests.** The suite proves the client, the tools and the
+  stdio path against a stub whose payloads were transcribed from a running console;
+  only `scripts/live_check.py` proves a particular deployment accepts you.
+
 ## Verifying it
 
-Three scripts, three different questions. Each exists because the others cannot
-answer its question, and a green run from the wrong one is worse than no run.
-
 ```bash
+.venv/bin/python -m pytest -q              # the full suite, no console needed
 .venv/bin/python scripts/check_tools.py    # is every defined tool registered?
 .venv/bin/python scripts/smoke_tools.py    # does each tool work, against known shapes?
 .venv/bin/python scripts/live_check.py     # does the real console accept us?
@@ -159,9 +294,10 @@ answer its question, and a green run from the wrong one is worse than no run.
 
 | Script | Question | Needs a console |
 |---|---|---|
+| `pytest` | The client, the schemas, every failure path, stdout purity, the stub path | no |
 | `check_tools.py` | Every `@mcp.tool()` in `server.py` actually reaches the running server | no |
 | `smoke_tools.py` | Each tool assembles a request and formats an answer | a stub, started for you |
-| `live_check.py` | The real console accepts the credential and answers | yes, with a token |
+| `live_check.py` | The real console accepts the credential and answers | yes, with a credential |
 
 `check_tools.py` exists because a tool written below
 `if __name__ == "__main__": mcp.run()` is dead code: `run()` blocks, the decorator
@@ -169,10 +305,8 @@ never executes, and the file looks correct while the server serves one tool fewe
 It parses the decorators out of the syntax tree and compares them with the registry
 at the moment `run()` is called.
 
-`live_check.py` runs `propose_block` first, because it is the only call that proves
-the admin role arrived. A 401 is a wrong credential, a 403 only on that tool is a
-readonly token, and a certificate error is the CA bundle. They look identical from
-outside and completely different from that script's output.
+CI runs the same suite on Python 3.10 and 3.12, plus `compileall` and `ruff`
+([workflow](.github/workflows/tests.yml)).
 
 ## The skills
 
@@ -181,26 +315,47 @@ at first, what a beacon looks like next to a busy host, and when filing a propos
 is justified. It drives the tools above and is the second agentic piece of the final
 project.
 
+fathom gives the agent hands; the skill gives it a method. Installation for Claude
+Code and Claude Desktop is in [docs/SETUP.md](docs/SETUP.md#install-the-threat-hunt-skill).
+
 ## Layout
 
 ```
 server.py                  the MCP server: ten tools, stderr logging only
 client.py                  the console API client, one credential path
+tests/                     pytest: client, schemas, failures, stdio, stub path
 scripts/check_tools.py     registration guard, no dependencies
 scripts/smoke_tools.py     every tool against a stub console
 scripts/stub_console.py    the stub: console wire shapes, 404 for anything else
 scripts/live_check.py      the real console, with the failure named
 scripts/list_tools.py      what a client is actually served
-ca-bundle.pem              the console's CA, if it uses its own
+scripts/transcript.py      regenerates docs/transcript.md against the stub
+docs/SETUP.md              MCP client and skill installation
+docs/transcript.md         a worked hunt, labelled STUB
+requirements.txt           the server's runtime freeze
+requirements-dev.txt       the pinned test and lint tools CI uses
+ca-bundle.pem              OPTIONAL, gitignored: the console's CA, if it uses its own
 .claude/skills/            the threat-hunt skill
+.github/workflows/         tests on 3.10 and 3.12, compileall and ruff
 ```
+
+`ca-bundle.pem` is not in the repository on purpose: it belongs to one deployment,
+and trusting one deployment's CA everywhere is worse than setting the variable
+where it applies.
 
 ## Requirements
 
-Python 3.10 or newer, which is what `mcp` itself requires. `requirements.txt` is a
-real freeze of the server's dependencies, not the development environment.
+Python 3.10 or newer. `requirements.txt` is a real freeze of the server's
+dependencies, not the development environment. `requirements-dev.txt` adds the
+pinned test and lint tools that CI uses.
 
-## Part of
+## Part of Weirvern
 
-The final project for INF 601, Advanced Programming with Python: a Flask console,
-a detector pipeline and this MCP server on top of the Weirvern API.
+The [Weirvern](https://github.com/hodlhart/weirvern) repository holds the console,
+the detection pipeline, the sensor fleet and the API this server reads. Fathom is
+the final project for INF 601, Advanced Programming with Python, and the
+agent-facing layer of that system.
+
+## License
+
+MIT. See [LICENSE](LICENSE).
