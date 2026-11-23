@@ -27,7 +27,15 @@ jobs:
       - name: Install
         run: |
           python -m pip install --upgrade pip
-          pip install -r requirements-dev.txt
+          if [ "${{ matrix.python-version }}" = "3.10" ]; then
+            # The freeze pins transitive packages that now require 3.11
+            # (pydantic-settings, starlette, sse-starlette, python-multipart,
+            # rpds-py, pycparser). This job still proves the code runs on the
+            # 3.10 floor mcp supports, with a resolvable dependency set.
+            pip install "mcp==1.30.0" "pytest==9.2.0" "ruff==0.17.6"
+          else
+            pip install -r requirements-dev.txt
+          fi
 
       - name: Syntax check
         run: python -m compileall -q server.py client.py scripts tests

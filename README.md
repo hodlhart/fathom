@@ -83,7 +83,10 @@ here, which is the design working rather than a fault.
 
 ## Install
 
-Python 3.10 or newer, which is what `mcp` itself requires.
+Python 3.10 or newer at the language level. The pinned `requirements.txt` needs
+3.11: several current transitive packages have dropped 3.10. On 3.10, install
+`mcp==1.30.0` and let the resolver choose compatible versions, which is what CI's
+3.10 job does.
 
 ```bash
 git clone https://github.com/hodlhart/fathom.git
@@ -345,9 +348,14 @@ where it applies.
 
 ## Requirements
 
-Python 3.10 or newer. `requirements.txt` is a real freeze of the server's
-dependencies, not the development environment. `requirements-dev.txt` adds the
-pinned test and lint tools that CI uses.
+Python 3.10 or newer at the language level; the pinned set needs 3.11.
+`requirements.txt` is a real freeze of the server's dependencies, not the
+development environment, and several of its transitive pins
+(`pydantic-settings`, `starlette`, `sse-starlette`, `python-multipart`,
+`rpds-py`, `pycparser`) now require 3.11. On a 3.10 interpreter, install
+`mcp==1.30.0` and let the resolver pick compatible versions; CI does exactly that
+in its 3.10 job, and runs the frozen set on 3.12.
+`requirements-dev.txt` adds the pinned test and lint tools.
 
 ## Part of Weirvern
 

@@ -17,7 +17,7 @@ is the walkthrough.
 
 | | |
 |---|---|
-| Python | 3.10 or newer |
+| Python | 3.11 or newer for the pinned install. 3.10 works with `mcp==1.30.0` and resolver-chosen dependencies |
 | A console | A running [Weirvern](https://github.com/hodlhart/weirvern) console, reachable from this machine |
 | A credential | A **viewer** token for the nine read tools. An **admin** token only if `propose_block` must file proposals |
 | The console CA | Only if the console uses a private CA. Point `WEIRVERN_CA_BUNDLE` at it; do not disable verification |
