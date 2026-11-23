@@ -10,11 +10,11 @@ wrong, or the tool itself is broken. Debugging those at once is how an afternoon
 disappears. This serves the shapes fathom reads, so every tool can be driven end
 to end before a token exists and the only variable left later is the credential.
 
-It is a fixture, not a simulation. The payloads are written to match the console's
-own wire shapes, and where a shape is unknown the stub answers an empty list
-rather than inventing fields that the real API would not send. A tool that works
-here is proven to assemble a request and format an answer; it is NOT proof that
-the console agrees, which is what the live check is for.
+It is a fixture, not a simulation. The payloads below were transcribed from a
+running console (2026-11-23) and then rewritten onto RFC 5737 documentation
+addresses, so the field names are the console's and no real host is described. An
+unknown path still answers 404 rather than inventing a shape: a stub that guesses
+is a stub that hides drift.
 
 Run it standalone if you want to poke at it with curl:
 
@@ -29,99 +29,309 @@ import json
 import os
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
-# One host reused across payloads so a reader can follow a single story.
+# Documentation addresses only (RFC 5737). One host carries the story so a
+# reader can follow a single investigation from anomaly to proposal.
 HOST = "192.0.2.10"
-SECOND_HOST = "192.0.2.11"
+PEER = "192.0.2.11"
+RESOLVER = "192.0.2.53"
+C2 = "198.51.100.66"
+CDN = "203.0.113.20"
 WINDOW = "2026-11-19T10:00:00"
+WINDOW_START = "2026-11-19T09:45:00"
 
 ANOMALIES = [
     {
         "detected_at": WINDOW,
-        "hostname": HOST,
-        "score": 0.91,
-        "action": "blocked",
-        "state": "open",
-        "reason": "steady beacon to a single destination, 42 flows, near zero bytes",
+        "window_start": WINDOW_START,
+        "src_addr": HOST,
+        "hostname": "",
+        "anomaly_score": 0.94,
+        "confidence": 0.91,
+        "severity": "high",
+        "detected_by_models": "Isolation Forest,Adaptive Baseline",
+        "model_agreement": 0.8,
+        "primary_deviation_feature": "conn_volume",
     },
     {
         "detected_at": WINDOW,
-        "hostname": SECOND_HOST,
-        "score": 0.44,
-        "action": "observed",
-        "state": "open",
-        "reason": "port sweep, 300 flows, almost no payload",
+        "window_start": WINDOW_START,
+        "src_addr": PEER,
+        "hostname": "",
+        "anomaly_score": 0.61,
+        "confidence": 0.54,
+        "severity": "medium",
+        "detected_by_models": "LOF",
+        "model_agreement": 0.4,
+        "primary_deviation_feature": "unique_destinations",
     },
 ]
 
-FLOWS = [
-    {
-        "src_addr": HOST,
-        "dst_addr": SECOND_HOST,
-        "dst_port": 443,
-        "proto": 6,
-        "total_bytes": 812,
-        "total_packets": 22,
-        "flow_count": 42,
-        "window_start": WINDOW,
-    },
-    {
-        "src_addr": SECOND_HOST,
-        "dst_addr": HOST,
-        "dst_port": 53,
-        "proto": 17,
-        "total_bytes": 140,
-        "total_packets": 6,
-        "flow_count": 9,
-        "window_start": WINDOW,
-    },
-]
-
-HOST_DETAIL = {
-    "addr": HOST,
-    "flows": FLOWS,
-    "anomalies": ANOMALIES[:1],
-    "first_seen": WINDOW,
-    "last_seen": WINDOW,
-}
-
-EVIDENCE = {
-    "addr": HOST,
-    "findings": [
-        {
-            "detected_at": WINDOW,
-            "hostname": HOST,
-            "score": 0.91,
-            "action": "blocked",
-            "state": "open",
-            "reason": "steady beacon",
-        }
+# The console wraps the severity tally, and the counts are rows rather than a
+# bare mapping. The header used to print the whole envelope.
+SEVERITY_COUNTS = {
+    "available": True,
+    "reason": "",
+    "counts": [
+        {"severity": "high", "count": 1},
+        {"severity": "medium", "count": 1},
     ],
 }
 
-ZEEKLOG = [
-    {
-        "ts": WINDOW,
-        "id_orig_h": HOST,
-        "id_resp_h": SECOND_HOST,
-        "query": "update.example.com",
-        "proto": "udp",
-        "service": "dns",
-    }
+FLOWS = [
+    {"src_addr": HOST, "dst_addr": C2, "dst_port": 443, "bytes": 812, "flows": 42},
+    {"src_addr": HOST, "dst_addr": RESOLVER, "dst_port": 53, "bytes": 140, "flows": 9},
+    {"src_addr": PEER, "dst_addr": HOST, "dst_port": 445, "bytes": 4096, "flows": 3},
 ]
 
-DNS = [
-    {"query": "update.example.com", "count": 42, "hosts": [HOST]},
-    {"query": "cdn.example.net", "count": 9, "hosts": [SECOND_HOST]},
-]
+FLOWS_PAYLOAD = {
+    "available": True,
+    "reason": "",
+    "port": 0,
+    "proto": 0,
+    "hours": 24,
+    "points": FLOWS,
+    "total_flows": 54,
+    "total_pairs": 3,
+    "truncated": False,
+}
 
-TOP_TALKERS = [
-    {"addr": HOST, "total_bytes": 4096, "flow_count": 42},
-    {"addr": SECOND_HOST, "total_bytes": 1024, "flow_count": 9},
-]
+HOST_DETAIL = {
+    "src_addr": HOST,
+    "hostname": "",
+    "hours": 24,
+    "errors": "",
+    "totals": {
+        "bytes": 5048,
+        "packets": 37,
+        "flows": 54,
+        "unique_destinations": 2,
+        "unique_ports": 2,
+        "first_seen": WINDOW_START,
+        "last_seen": WINDOW,
+    },
+    "top_destinations": [
+        {"dst_addr": C2, "hostname": "", "bytes": 812, "flows": 42, "ports": 1},
+        {"dst_addr": RESOLVER, "hostname": "", "bytes": 140, "flows": 9, "ports": 1},
+    ],
+    "top_ports": [
+        {"dst_port": 443, "proto": 6, "bytes": 812, "flows": 42},
+        {"dst_port": 53, "proto": 17, "bytes": 140, "flows": 9},
+    ],
+    "timeline": [
+        {"hour": "2026-11-19T09:00:00", "bytes": 2000, "flows": 22},
+        {"hour": "2026-11-19T10:00:00", "bytes": 3048, "flows": 32},
+    ],
+    "anomalies": ANOMALIES[:1],
+    "zeek_services": [
+        {"service": "ssl", "conns": 42, "bytes": 812},
+        {"service": "dns", "conns": 9, "bytes": 140},
+    ],
+    "external": {"available": True, "addr": HOST, "hours": 24},
+    "exposure": {"available": True, "reason": "", "exposure": {}},
+}
+
+EVIDENCE = {
+    "src_addr": HOST,
+    "hostname": "",
+    "window_start": WINDOW_START,
+    "window_end": WINDOW,
+    "anomaly": {
+        "anomaly_score": 0.94,
+        "severity": "high",
+        "detected_by_models": "Isolation Forest,Adaptive Baseline",
+        "primary_deviation_feature": "conn_volume",
+        "severity_basis": "two independent families",
+        "review_state": "open",
+    },
+    "flow_summary": {
+        "bytes": 5048,
+        "packets": 37,
+        "flows": 54,
+        "unique_destinations": 2,
+        "unique_ports": 2,
+        "first_seen": WINDOW_START,
+        "last_seen": WINDOW,
+    },
+    "source_freshness": {
+        "flows": {"state": "fresh", "age_s": 42.0},
+        "zeek_conn": {"state": "fresh", "age_s": 51.0},
+        "zeek_ssl": {"state": "fresh", "age_s": 51.0},
+        "zeek_dns": {"state": "fresh", "age_s": 44.0},
+        "zeek_notice": {"state": "fresh", "age_s": 61.0},
+    },
+    "flows": FLOWS[:1],
+    "zeek_conn": [
+        {
+            "ts": WINDOW,
+            "dst_addr": C2,
+            "dst_port": 443,
+            "proto": "tcp",
+            "service": "ssl",
+            "duration": 0.42,
+            "orig_bytes": 180,
+            "resp_bytes": 632,
+            "conn_state": "SF",
+            "hostname": "",
+        }
+    ],
+    "zeek_ssl": [
+        {
+            "ts": WINDOW,
+            "dst_addr": C2,
+            "dst_port": 443,
+            "version": "TLSv13",
+            "server_name": "beacon.example.com",
+            "ja4": "t13d1516h2_8daaf6152771_02713d6af862",
+            "ja4_orig": "",
+            "validation_status": "ok",
+            "hostname": "",
+        }
+    ],
+    "zeek_dns": [
+        {
+            "ts": WINDOW,
+            "dst_addr": RESOLVER,
+            "query": "beacon.example.com",
+            "qtype": 1,
+            "qtype_label": "A",
+            "rcode": 0,
+            "rcode_label": "NOERROR",
+        }
+    ],
+    "notice": [],
+    "errors": None,
+}
+
+ZEEKLOG = {
+    "available": True,
+    "reason": "",
+    "log": "dns",
+    "table": "zeek_dns",
+    "hours": 24,
+    "points": [
+        {"addr": HOST, "n": 42, "name": "beacon.example.com"},
+        {"addr": PEER, "n": 9, "name": "cdn.example.com"},
+    ],
+}
+
+DNS = {
+    "available": True,
+    "reason": "",
+    "rows": [
+        {
+            "ts": WINDOW,
+            "client": HOST,
+            "query": "beacon.example.com",
+            "qtype": 1,
+            "qtype_label": "A",
+            "rcode": 0,
+            "rcode_label": "NOERROR",
+            "answers": "198.51.100.66",
+            "answer_ips": [C2],
+        },
+        {
+            "ts": WINDOW,
+            "client": PEER,
+            "query": "cdn.example.com",
+            "qtype": 1,
+            "qtype_label": "A",
+            "rcode": 0,
+            "rcode_label": "NOERROR",
+            "answers": "203.0.113.20",
+            "answer_ips": [CDN],
+        },
+    ],
+    "total": 2,
+    "limit": 25,
+    "offset": 0,
+    "bucket_s": 60,
+    "histogram": [],
+    "facets": {},
+}
+
+OVERVIEW = {
+    "health": {"ok": True, "fetched_at": WINDOW, "checks": []},
+    "sensor": {"reported": 1, "running": 1, "stale": 0},
+    "anomalies": ANOMALIES,
+    "top_talkers": [
+        {"src_addr": HOST, "hostname": "", "bytes": 5048, "flows": 54, "destinations": 2},
+        {"src_addr": PEER, "hostname": "", "bytes": 4096, "flows": 3, "destinations": 1},
+    ],
+    "capabilities": {"cluster_available": True, "reason": ""},
+    "data_error": "",
+}
+
+NETFLOW = {
+    "volume": {
+        "available": True,
+        "reason": "",
+        "hours": 24,
+        "bucket_s": 900,
+        "points": [
+            {"t": "2026-11-19T09:00:00", "bytes": 2000, "flows": 22},
+            {"t": "2026-11-19T10:00:00", "bytes": 3048, "flows": 32},
+        ],
+    },
+    "protocols": {
+        "available": True,
+        "reason": "",
+        "points": [
+            {"proto": 6, "label": "TCP", "bytes": 4908, "flows": 45},
+            {"proto": 17, "label": "UDP", "bytes": 140, "flows": 9},
+        ],
+    },
+    "ports": {
+        "available": True,
+        "reason": "",
+        "points": [
+            {"port": 443, "proto": 6, "bytes": 812, "flows": 42},
+            {"port": 53, "proto": 17, "bytes": 140, "flows": 9},
+        ],
+    },
+    "spread": {
+        "available": True,
+        "reason": "",
+        "points": [
+            {"src_addr": HOST, "hostname": "", "destinations": 2, "flows": 54},
+            {"src_addr": PEER, "hostname": "", "destinations": 1, "flows": 3},
+        ],
+    },
+    "noise": {"available": True, "reason": "", "flows": 0, "bytes": 0},
+    "talkers": {
+        "available": True,
+        "reason": "",
+        "points": [
+            {"src_addr": HOST, "hostname": "", "bytes": 5048, "flows": 54, "destinations": 2},
+        ],
+    },
+}
 
 AUDIT = {
-    "decisions": ANOMALIES,
-    "total": len(ANOMALIES),
+    "available": True,
+    "reason": "",
+    "now": WINDOW,
+    # The route is the pipeline auditing itself, so a finding names a class of
+    # deployment problem and the console surface that fixes it.
+    "findings": [
+        {
+            "class": "silent_sensor",
+            "severity": "warn",
+            "subject": "sensor-a",
+            "detail": "silent for 2h (stale after 45s)",
+            "elapsed_s": 7200,
+            "fix": {"view": "weirlings", "sensor": "sensor-a", "label": "open the sensor"},
+        },
+        {
+            "class": "expired_rules",
+            "severity": "info",
+            "subject": "sluice",
+            "detail": "1 blocking rule expired during the window",
+            "elapsed_s": None,
+            "fix": {"view": "sluice", "label": "open the gate"},
+        },
+    ],
+    "counts": {"silent_sensor": 1, "expired_rules": 1},
+    "errors": {},
 }
 
 PROPOSALS = {"proposals": [], "total": 0}
@@ -134,7 +344,7 @@ RIPPLES = {
     "window_hours": 24,
     "model_version": "ripple-phase1",
     "count": 1,
-    "signature_channels": ["conn_dst", "dns_query"],
+    "signature_channels": ["conn_volume", "dns_entropy"],
     "severity_bands": {"low": {"min_score": 3.0, "min_families": 1},
                        "medium": {"min_score": 4.0, "min_families": 2},
                        "high": {"min_score": 6.0, "min_families": 3}},
@@ -147,22 +357,22 @@ RIPPLES = {
     "ripples": [
         {
             "host": HOST,
-            "window_start": WINDOW,
-            "window_end": "2026-11-19T10:30:00",
+            "window_start": WINDOW_START,
+            "window_end": WINDOW,
             "score": 8.31,
             "combined_p": 0.00042,
-            "channels": ["flow_bytes", "dns_entropy"],
-            "families": ["dns", "flow"],
+            "channels": ["conn_volume", "dns_entropy"],
+            "families": ["conn", "dns"],
             "single_family": False,
             "severity": "medium",
             "explanation": (
-                "outbound bytes fell to a twentieth of this host's baseline while DNS query "
+                "connection count rose to twelve times this host's baseline while DNS query "
                 "entropy rose, in the same window"
             ),
             "evidence": [
                 {
-                    "channel": "flow_bytes",
-                    "family": "volume",
+                    "channel": "conn_volume",
+                    "family": "conn",
                     "scale": "1h",
                     "model_id": "baseline",
                     "model_version": "1",
@@ -172,15 +382,15 @@ RIPPLES = {
                     "present": True,
                     "host": HOST,
                     "observed_at": WINDOW,
-                    "value": 812.0,
-                    "baseline_median": 16800.0,
+                    "value": 310.0,
+                    "baseline_median": 25.0,
                     "sample_count": 167,
                     "coverage": 0.98,
-                    "direction": "down",
+                    "direction": "above",
                 },
                 {
                     "channel": "dns_entropy",
-                    "family": "shape",
+                    "family": "dns",
                     "scale": "1h",
                     "model_id": "baseline",
                     "model_version": "1",
@@ -194,7 +404,7 @@ RIPPLES = {
                     "baseline_median": 2.1,
                     "sample_count": 167,
                     "coverage": 0.98,
-                    "direction": "up",
+                    "direction": "above",
                 },
             ],
         }
@@ -284,19 +494,21 @@ class Handler(BaseHTTPRequestHandler):
         self.end_headers()
         self.wfile.write(body)
 
+    def _failure(self, message: str) -> dict:
+        """The house error body. Every non-200 answer on the real console is this shape."""
+        return {"ok": False, "error": message}
+
     def do_GET(self) -> None:  # noqa: N802
         path, _, query = self.path.partition("?")
+        params = dict(pair.split("=", 1) for pair in query.split("&") if "=" in pair)
         # The unavailable branch is reachable on purpose: hours=999 asks the stub for the shape
         # the console returns when the evidence cannot be read, so a check can prove the tool
         # says "could not read" instead of "none formed".
         if path == "/api/ripples":
-            hours = ""
-            for pair in query.split("&"):
-                if pair.startswith("hours="):
-                    hours = pair.split("=", 1)[1]
+            hours = params.get("hours", "")
             # One value per empty case, so the four-way distinction can be tested rather than
             # asserted: 1 nothing measured, 2 measured out of scope, 3 baselines too short,
-            # 4 measured in scope and ungrouped, 999 unreadable.
+            # 4 measured in scope and ungrouped, 5 insufficient, 999 unreadable.
             if hours == "999":
                 self._send(RIPPLES_UNAVAILABLE)
                 return
@@ -339,17 +551,39 @@ class Handler(BaseHTTPRequestHandler):
                         ripple.pop(key, None)
             self._send(payload)
             return
+        if path == "/api/flows":
+            # The console refuses an unfiltered flow query. Answering one here would let a
+            # broken tool look correct against the stub and fail against the deployment.
+            if not (params.get("src") or params.get("port") or params.get("proto")):
+                self._send(self._failure("pass port, proto or src"), status=400)
+                return
+            payload = copy.deepcopy(FLOWS_PAYLOAD)
+            payload["hours"] = int(params.get("hours") or 24)
+            self._send(payload)
+            return
+        if path == "/api/zeeklog":
+            payload = copy.deepcopy(ZEEKLOG)
+            payload["log"] = params.get("log") or "dns"
+            payload["table"] = f"zeek_{payload['log']}"
+            self._send(payload)
+            return
         routes = {
             "/api/healthz": {"ok": True},
             "/api/session": {"accounts": True, "role": "admin", "via": "token"},
-            "/api/overview": {"hosts": 2, "flows": len(FLOWS)},
-            "/api/anomalies": ANOMALIES,
-            "/api/flows": FLOWS,
+            "/api/overview": OVERVIEW,
+            "/api/anomalies": {
+                "rows": ANOMALIES,
+                "total_unfiltered": len(ANOMALIES),
+                "watch_error": "",
+                "fused": {},
+                "discipline": {},
+                "severity_counts": SEVERITY_COUNTS,
+                "band_counts": SEVERITY_COUNTS,
+            },
             "/api/host": HOST_DETAIL,
             "/api/evidence": EVIDENCE,
-            "/api/zeeklog": ZEEKLOG,
             "/api/zeek": ZEEKLOG,
-            "/api/netflow": FLOWS,
+            "/api/netflow": NETFLOW,
             "/api/dns": DNS,
             "/api/audit": AUDIT,
             "/api/write-trail": {"entries": [], "total": 0},
@@ -360,7 +594,7 @@ class Handler(BaseHTTPRequestHandler):
         if path in routes:
             self._send(routes[path])
             return
-        self._send({"error": f"the stub does not serve {path}"}, status=404)
+        self._send(self._failure(f"the stub does not serve {path}"), status=404)
 
     def do_POST(self) -> None:  # noqa: N802
         path = self.path.split("?", 1)[0]
@@ -369,18 +603,20 @@ class Handler(BaseHTTPRequestHandler):
         try:
             body = json.loads(raw or b"{}")
         except json.JSONDecodeError:
-            self._send({"error": "the body must be a JSON object"}, status=400)
+            self._send(self._failure("the body must be a JSON object"), status=400)
             return
         if path == "/api/login":
-            self._send({"token": "stub-session-token"}, status=200)
+            # The key is `session`, not `token`: client.py reads `session` from this route.
+            self._send({"ok": True, "session": "stub-session-token", "username": "operator",
+                        "role": "admin", "must_change": False})
             return
         if path == "/api/proposals":
             if not str(body.get("reason") or "").strip():
-                self._send({"error": "a proposal needs a reason"}, status=400)
+                self._send(self._failure("a proposal needs a reason"), status=400)
                 return
             self._send(_created_proposal(body), status=201)
             return
-        self._send({"error": f"the stub does not accept a POST to {path}"}, status=404)
+        self._send(self._failure(f"the stub does not accept a POST to {path}"), status=404)
 
 
 def main() -> int:

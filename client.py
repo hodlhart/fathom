@@ -61,7 +61,17 @@ def _ssl_context():
     """
     bundle = os.environ.get("WEIRVERN_CA_BUNDLE", "").strip()
     if bundle:
-        return ssl.create_default_context(cafile=bundle)
+        try:
+            return ssl.create_default_context(cafile=bundle)
+        except OSError as exc:
+            # A missing or unreadable bundle used to surface as a bare
+            # FileNotFoundError from inside urlopen, with no mention of the
+            # variable that pointed at it.
+            raise WeirvernError(
+                f"Could not load the CA bundle at {bundle}: {exc.strerror or exc}. "
+                "Point WEIRVERN_CA_BUNDLE at the console's CA certificate, or unset it "
+                "to use the system trust store."
+            ) from exc
     return ssl.create_default_context()
 
 
@@ -352,9 +362,9 @@ def post(path, body, token=None):
 def propose_block(host, reason, evidence="", ttl_minutes=0, token=None):
     """Ask Weirvern to consider blocking a host. This ENFORCES NOTHING on its own.
 
-    The proposal is recorded with its reason and evidence, and a person decides in the console. That
-    split is why an agent is allowed to call this at all: a detector that can block directly can take
-    a network away on a bad day.
+    The proposal is recorded with its reason and evidence, and a person decides in the console.
+    That split is why an agent is allowed to call this at all: a detector that can block directly
+    can take a network away on a bad day.
     """
     return post("/api/proposals", {
         "host": host,

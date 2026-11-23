@@ -35,8 +35,17 @@ def _fail(exc):
     return f"fathom could not complete that read. {exc}"
 
 
-def _rows(items, fields, limit=20):
-    """Render a list of dicts as aligned rows."""
+def _rows(items, fields, limit=20, wide=()):
+    """Render a list of dicts as aligned rows.
+
+    A missing value prints as `-` rather than an empty cell: the hostname column
+    is blank on a host the console has not resolved, and a blank cell is
+    indistinguishable from a column that was never filled at all.
+
+    Fields named in `wide` are not cut at the column width. A model's `reason` or
+    a finding's `detail` is a sentence, and truncating it to 38 characters
+    removed the part that says what happened.
+    """
     if not isinstance(items, list) or not items:
         return "  (nothing in this window)"
     lines = []
@@ -46,7 +55,11 @@ def _rows(items, fields, limit=20):
         cells = []
         for key in fields:
             value = item.get(key)
-            cells.append("" if value is None else str(value)[:38])
+            if value is None or value == "":
+                cells.append("-")
+                continue
+            text = str(value)
+            cells.append(text if key in wide else text[:38])
         lines.append("  " + "  ".join(cells))
     if len(items) > limit:
         lines.append(f"  ... {len(items) - limit} more not shown")
@@ -54,16 +67,68 @@ def _rows(items, fields, limit=20):
 
 
 def _summary(value, limit=16):
-    """Render one dict as key and value lines, for payloads that are not lists."""
+    """Render one dict as key and value lines, for payloads that are not lists.
+
+    Empty fields are omitted rather than printed as `None`. The console sends a
+    null for a hostname it has not resolved and an empty reason on a healthy
+    route, and a wall of `key: None` buries the fields that do carry an answer.
+    """
     if not isinstance(value, dict):
         return f"  {value}"
     lines = []
     for key, item in list(value.items())[:limit]:
+        if key in ("available", "reason") and item in (True, "", None):
+            continue
+        if item is None or item == "" or item == [] or item == {}:
+            continue
         if isinstance(item, (list, dict)):
             lines.append(f"  {key}: {json.dumps(item)[:160]}")
         else:
             lines.append(f"  {key}: {item}")
-    return "\n".join(lines)
+    return "\n".join(lines) or "  (nothing to report)"
+
+
+def _points(value):
+    """The rows inside a section, whether the console sends a list or a {points: []} envelope.
+
+    /api/netflow and /api/zeeklog wrap their rows in a section object with
+    `available` and `reason` beside `points`. Reading the section as a dict of
+    scalars is what printed a raw JSON blob where a table belonged.
+    """
+    if isinstance(value, dict):
+        for key in ("points", "rows"):
+            if isinstance(value.get(key), list):
+                return value[key]
+        return None
+    return value if isinstance(value, list) else None
+
+
+def _counts(value):
+    """Render a counts payload as one short phrase, or an empty string.
+
+    Two shapes reach here: `/api/anomalies` sends {counts: [{severity, count}]}
+    and `/api/audit` sends a plain {class: count}. Printing the envelope put a
+    Python dict in the middle of the sentence a model reads.
+    """
+    if isinstance(value, dict):
+        rows = value.get("counts")
+        if isinstance(rows, list):
+            pairs = [
+                f"{row.get('severity') or row.get('band') or '?'} {row.get('count')}"
+                for row in rows if isinstance(row, dict)
+            ]
+            if pairs:
+                return ", ".join(pairs)
+        elif rows:
+            return ", ".join(f"{key} {count}" for key, count in list(rows.items())[:8])
+        plain = [f"{key} {count}" for key, count in list(value.items())[:8]
+                 if key not in ("available", "reason")]
+        if plain and not rows:
+            return ", ".join(plain)
+        return ""
+    if value:
+        return str(value)[:80]
+    return ""
 
 
 @mcp.tool()
@@ -90,12 +155,16 @@ def list_anomalies(hours: int = 24, limit: int = 20) -> str:
         return _summary(payload)
     rows = payload.get("rows") or []
     header = f"Anomalies in the last {hours}h"
-    if payload.get("severity_counts"):
-        header += f", severity counts {payload['severity_counts']}"
+    counts = _counts(payload.get("severity_counts"))
+    if counts:
+        header += f", severity counts {counts}"
     if payload.get("watch_error"):
         header += f", watch error: {str(payload['watch_error'])[:80]}"
-    body = _rows(rows, ("detected_at", "hostname", "anomaly_score", "confidence",
-                        "detected_by_models"), limit)
+    # src_addr, not hostname: /api/anomalies carries the address on every row and
+    # resolves `hostname` only sometimes. The row used to render the hostname
+    # column, which printed blank beside every live finding.
+    body = _rows(rows, ("detected_at", "src_addr", "anomaly_score", "confidence",
+                        "detected_by_models"), limit, wide=("detected_by_models",))
     return header + ":\n" + body
 
 
@@ -116,7 +185,7 @@ def hunt_flows(src: str = "", port: int = 0, proto: int = 0, hours: int = 24,
         limit: how many records to show.
 
     Returns:
-        One line per flow with time, endpoints, port and volume, or a sentence
+        One line per conversation with its endpoints, port and volume, or a sentence
         explaining why the search failed.
     """
     if not (src or port or proto):
@@ -133,6 +202,8 @@ def hunt_flows(src: str = "", port: int = 0, proto: int = 0, hours: int = 24,
 
     if not isinstance(payload, dict):
         return _summary(payload)
+    if payload.get("available") is False:
+        return f"Flow data is unavailable: {payload.get('reason') or 'no reason given'}"
     rows = payload.get("points") or []
     scope = " ".join(part for part in (
         f"src {src}" if src else "", f"port {port}" if port else "",
@@ -142,8 +213,10 @@ def hunt_flows(src: str = "", port: int = 0, proto: int = 0, hours: int = 24,
         header += f" ({payload.get('total_flows')} flows, {payload.get('total_pairs')} pairs)"
     if payload.get("truncated"):
         header += ", truncated"
+    # The route returns aggregated conversations: no per-flow timestamp and no
+    # protocol on the point, so asking for those columns printed blanks.
     return header + ":\n" + _rows(
-        rows, ("ts", "src_addr", "dst_addr", "dst_port", "proto", "bytes", "packets"), limit
+        rows, ("src_addr", "dst_addr", "dst_port", "bytes", "flows"), limit
     )
 
 
@@ -175,9 +248,13 @@ def get_host(addr: str) -> str:
     parts = [title + ":", "totals:", _summary(detail.get("totals") or {})]
     parts.append("top destinations:")
     parts.append(_rows(detail.get("top_destinations"),
-                       ("dst_addr", "hostname", "bytes", "flows"), 8))
+                       ("dst_addr", "hostname", "bytes", "flows", "ports"), 8))
     parts.append("top ports:")
     parts.append(_rows(detail.get("top_ports"), ("dst_port", "proto", "bytes", "flows"), 8))
+    services = detail.get("zeek_services")
+    if isinstance(services, list) and services:
+        parts.append("zeek services:")
+        parts.append(_rows(services, ("service", "conns", "bytes"), 6))
     if detail.get("errors"):
         parts.append(f"note: {str(detail['errors'])[:200]}")
     return "\n".join(parts)
@@ -207,14 +284,33 @@ def get_finding_evidence(addr: str, start: str) -> str:
     if not isinstance(bundle, dict):
         return _summary(bundle)
     parts = [f"Evidence for {addr} from {start}:"]
-    for key, value in list(bundle.items())[:10]:
+    if bundle.get("notice") and isinstance(bundle["notice"], str):
+        parts.append(f"  notice: {bundle['notice']}")
+    # Each stage has its own record shape, so each gets its own columns. The
+    # generic name/state/detail/value set printed blank rows beside real Zeek
+    # records, which is exactly the "looks empty" failure this bundle exists to
+    # prevent.
+    columns = {
+        "flows": ("src_addr", "dst_addr", "dst_port", "bytes", "flows"),
+        "zeek_conn": ("ts", "dst_addr", "dst_port", "proto", "service", "conn_state"),
+        "zeek_ssl": ("ts", "dst_addr", "dst_port", "version", "server_name",
+                     "validation_status"),
+        "zeek_dns": ("ts", "dst_addr", "query", "qtype_label", "rcode_label"),
+        "notice": ("ts", "note", "msg", "src_addr"),
+    }
+    # No arbitrary prefix here: the bundle carries the anomaly, the flow summary,
+    # freshness per source and one list per Zeek log, and a ten-key cut dropped
+    # the DNS and notice sections entirely.
+    for key, value in bundle.items():
+        if key == "notice" and isinstance(value, str):
+            continue
         if isinstance(value, list):
             parts.append(f"{key}: {len(value)} item(s)")
-            parts.append(_rows(value, ("name", "state", "detail", "value"), 6))
+            parts.append(_rows(value, columns.get(key, ("name", "state", "detail", "value")), 6))
         elif isinstance(value, dict):
             parts.append(f"{key}:")
             parts.append(_summary(value))
-        else:
+        elif value is not None and value != "":
             parts.append(f"  {key}: {value}")
     return "\n".join(parts)
 
@@ -241,12 +337,14 @@ def query_zeek(log: str = "dns", hours: int = 24, limit: int = 25) -> str:
         return _fail(exc)
 
     header = f"Zeek {log} log, last {hours}h:"
-    if isinstance(payload, dict):
-        rows = payload.get("rows") or payload.get("hosts")
-        if isinstance(rows, list):
-            return header + "\n" + _rows(rows, ("host", "hostname", "count", "name"), limit)
-    if isinstance(payload, list):
-        return header + "\n" + _rows(payload, ("host", "hostname", "count", "name"), limit)
+    if isinstance(payload, dict) and payload.get("available") is False:
+        return f"Zeek {log} is unavailable: {payload.get('reason') or 'no reason given'}"
+    # The live route answers {log, table, hours, points: [{addr, n, name}]}. The
+    # old code looked for rows/hosts, found neither, and printed the envelope as a
+    # JSON blob where a table belonged.
+    rows = _points(payload)
+    if rows is not None:
+        return header + "\n" + _rows(rows, ("addr", "n", "name"), limit)
     return header + "\n" + _summary(payload)
 
 
@@ -279,14 +377,28 @@ def top_talkers(hours: int = 24, limit: int = 10) -> str:
     # whose sections are all aggregates.
     talkers = dashboard.get("top_talkers") if isinstance(dashboard, dict) else None
     parts.append(_rows(talkers, ("src_addr", "hostname", "bytes", "flows", "destinations"), limit))
-    for section in ("protocols", "ports", "volume", "spread", "noise"):
+    # Every netflow section is {available, reason, points}, and the columns differ
+    # by section. Reading a section as a flat dict printed the whole JSON envelope
+    # under the heading instead of the rows it wraps.
+    columns = {
+        "protocols": ("proto", "label", "bytes", "flows"),
+        "ports": ("port", "proto", "bytes", "flows"),
+        "volume": ("t", "bytes", "flows"),
+        "spread": ("src_addr", "destinations", "flows"),
+        "noise": ("flows", "bytes"),
+    }
+    for section, fields in columns.items():
         value = payload.get(section)
         if not value:
             continue
-        parts.append(f"{section}:")
-        if isinstance(value, list):
-            parts.append(_rows(value, ("name", "label", "count", "bytes"), limit))
-        else:
+        points = _points(value)
+        if isinstance(points, list):
+            if not points:
+                continue
+            parts.append(f"{section}:")
+            parts.append(_rows(points, fields, limit))
+        elif isinstance(value, dict):
+            parts.append(f"{section}:")
             parts.append(_summary(value))
     return "\n".join(parts)
 
@@ -325,19 +437,21 @@ def dns_names(hours: int = 24, limit: int = 25) -> str:
 
 @mcp.tool()
 def alert_audit(hours: int = 24, limit: int = 25) -> str:
-    """Read what the alerting decided and what was done about it.
+    """Read the pipeline's self-audit: what the console says is wrong with it.
 
-    Use this when asked whether anything was blocked, whether a rule fired, or
-    what happened after a finding. This is the record of decisions rather than of
-    detections, so it answers a different question from list_anomalies.
+    Use this when asked whether the deployment is healthy, whether a sensor has
+    gone silent, whether a rule expired, or why a finding might be missing. This
+    is the console auditing itself rather than the traffic: it answers "is the
+    thing that watches the network working", which is a different question from
+    what the detectors found.
 
     Args:
         hours: how far back to read.
         limit: how many findings to show.
 
     Returns:
-        One line per finding with its decision, or a sentence explaining why the
-        read failed.
+        One line per finding with its severity, class, subject and detail, or a
+        sentence explaining why the read failed.
     """
     try:
         payload = client.audit(hours=hours)
@@ -347,14 +461,17 @@ def alert_audit(hours: int = 24, limit: int = 25) -> str:
     if not isinstance(payload, dict):
         return _summary(payload)
     if not payload.get("available", True):
-        return f"The audit is unavailable: {payload.get('reason', 'no reason given')}"
+        return f"The pipeline audit is unavailable: {payload.get('reason', 'no reason given')}"
     findings = payload.get("findings")
-    header = f"Alert audit for the last {hours}h"
-    if payload.get("counts"):
-        header += f", counts {payload['counts']}"
+    header = f"Pipeline audit for the last {hours}h"
+    counts = _counts(payload.get("counts"))
+    if counts:
+        header += f", counts {counts}"
+    if payload.get("errors"):
+        header += f", unreadable checks {_counts(payload['errors'])}"
     if isinstance(findings, list):
         return header + ":\n" + _rows(
-            findings, ("detected_at", "hostname", "score", "action", "state", "reason"), limit)
+            findings, ("severity", "class", "subject", "detail"), limit, wide=("detail",))
     if isinstance(findings, dict):
         return header + ":\n" + _summary(findings)
     return header + ":\n  (nothing in this window)"

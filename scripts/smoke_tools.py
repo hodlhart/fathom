@@ -118,11 +118,12 @@ async def run(base: str) -> int:
                     print(f"  FAIL  {name}: {text[:100]}")
                 else:
                     print(f"  ok    {name}: {text.splitlines()[0][:88]}")
-            # THE FAILURE SHAPE IS CHECKED SEPARATELY, and INSIDE the session. It sat outside the
-            # `async with` at first and every call on the closed session raised a ClosedResourceError
-            # whose string is empty, so the check reported failure with no reason at all.
-            # A formatting bug here is the defect class this project keeps finding: a read that failed
-            # must not come back looking like a quiet network. The stub answers available:false at 999.
+            # THE FAILURE SHAPE IS CHECKED SEPARATELY, and INSIDE the session. It sat outside
+            # the `async with` at first and every call on the closed session raised a
+            # ClosedResourceError whose string is empty, so the check reported failure with
+            # no reason at all. A formatting bug here is the defect class this project keeps
+            # finding: a read that failed must not come back looking like a quiet network.
+            # The stub answers available:false at 999.
             try:
                 blind = await session.call_tool("list_ripples", {"hours": 999})
                 blind_text = " ".join(
@@ -131,7 +132,7 @@ async def run(base: str) -> int:
                 says_failed = "could not be read" in blind_text
                 says_quiet = "no ripple formed" in blind_text.lower()
                 if says_failed and not says_quiet:
-                    print("  ok    list_ripples: an unreadable evidence set is not reported as quiet")
+                    print("  ok    list_ripples: an unreadable evidence set is not quiet")
                 else:
                     failures.append(
                         f"list_ripples failure shape: failed={says_failed} quiet={says_quiet}"
