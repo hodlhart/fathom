@@ -315,8 +315,7 @@ CI runs the same suite on Python 3.10 and 3.12, plus `compileall` and `ruff`
 
 `.claude/skills/threat-hunt/SKILL.md` encodes the investigation method: what to look
 at first, what a beacon looks like next to a busy host, and when filing a proposal
-is justified. It drives the tools above and is the second agentic piece of the final
-project.
+is justified. It drives the tools above and gives an operator a repeatable method to follow.
 
 fathom gives the agent hands; the skill gives it a method. Installation for Claude
 Code and Claude Desktop is in [docs/SETUP.md](docs/SETUP.md#install-the-threat-hunt-skill).
@@ -361,8 +360,8 @@ in its 3.10 job, and runs the frozen set on 3.12.
 
 The [Weirvern](https://github.com/hodlhart/weirvern) repository holds the console,
 the detection pipeline, the sensor fleet and the API this server reads. Fathom is
-the final project for INF 601, Advanced Programming with Python, and the
-agent-facing layer of that system.
+the MCP front door for that system: the Flask app, the detector pipeline and this
+server sit on top of the Weirvern API.
 
 ## License
 
